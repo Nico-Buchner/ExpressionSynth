@@ -42,27 +42,61 @@ workflows:
 
       - name: Configure (CMake -> Xcode project)
         script: |
+          # Start clean. A build directory configured for a different
+          # platform will keep its cached settings and silently ignore
+          # the flags below.
+          rm -rf build-ios
+
+          # CMAKE_SYSTEM_NAME alone is documented to be enough, but in
+          # practice CMake can still resolve the macOS SDK and emit a
+          # macOS-only project. Setting the sysroot and architecture
+          # explicitly removes the ambiguity.
           cmake -B build-ios -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
 
-      - name: List generated schemes
+      - name: Verify the project actually targets iOS
         script: |
-          # Useful on first run: confirms what JUCE actually named the
-          # targets, so the build step below can be corrected if needed.
-          xcodebuild -project build-ios/ExpressionSynth.xcodeproj -list
+          # Fail here with a clear message rather than several steps
+          # later with an opaque "no matching destination" error.
+          echo "--- platform settings in CMakeCache ---"
+          grep -E "CMAKE_SYSTEM_NAME|CMAKE_OSX_SYSROOT|CMAKE_OSX_ARCHITECTURES|CMAKE_OSX_DEPLOYMENT_TARGET" \
+            build-ios/CMakeCache.txt || true
 
-      - name: Build AUv3 target (unsigned)
+          if ! grep -q "CMAKE_OSX_SYSROOT:.*iphoneos" build-ios/CMakeCache.txt; then
+            echo ""
+            echo "ERROR: CMake did not configure for iOS."
+            echo "The generated project would build for macOS instead."
+            exit 1
+          fi
+          echo "OK — project is configured for iOS."
+
+      - name: List generated targets and destinations
         script: |
-          xcodebuild \
-            -project build-ios/ExpressionSynth.xcodeproj \
-            -scheme ExpressionSynth_Standalone \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+          echo "--- targets and schemes ---"
+          xcodebuild -project build-ios/ExpressionSynth.xcodeproj -list
+          echo ""
+          echo "--- destinations for the Standalone scheme ---"
+          # -showdestinations tells us what platforms the scheme really
+          # supports, which is exactly what the previous failure needed.
+          xcodebuild -project build-ios/ExpressionSynth.xcodeproj \
+            -scheme ExpressionSynth_Standalone -showdestinations || true
+
+      - name: Build (unsigned)
+        script: |
+          # Driving the build through CMake rather than calling xcodebuild
+          # directly: CMake already knows the platform it configured for,
+          # so there is no second place for the target platform to be
+          # stated and disagree.
+          cmake --build build-ios \
+            --config Release \
+            --target ExpressionSynth_Standalone \
+            -- -sdk iphoneos \
+               CODE_SIGNING_ALLOWED=NO \
+               CODE_SIGNING_REQUIRED=NO \
+               CODE_SIGN_IDENTITY=""
 
     artifacts:
       - /tmp/xcodebuild_logs/*.log
