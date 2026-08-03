@@ -1,0 +1,155 @@
+# Two workflows, deliberately separate.
+#
+# Run `compile-check` FIRST. It needs no Apple Developer account, no
+# certificates, and no App Store Connect setup — it only answers "does
+# this C++ actually build for iOS?". Getting that green before touching
+# signing removes most of the variables from the harder problem, and
+# costs a fraction of the build minutes to iterate on.
+#
+# Only once compile-check passes, run `ios-testflight`.
+
+definitions:
+  juce_version: &juce_version "8.0.12"   # verify against github.com/juce-framework/JUCE/tags
+  ios_deployment_target: &ios_target "16.0"
+
+workflows:
+
+  # ---------------------------------------------------------------
+  # 1. Compile check — no signing, no Apple account needed
+  # ---------------------------------------------------------------
+  compile-check:
+    name: Compile Check (unsigned)
+    max_build_duration: 45
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        JUCE_VERSION: *juce_version
+        IOS_DEPLOYMENT_TARGET: *ios_target
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: '*'
+          include: true
+
+    scripts:
+      - name: Fetch JUCE
+        script: |
+          git clone --depth 1 --branch "$JUCE_VERSION" \
+            https://github.com/juce-framework/JUCE.git JUCE
+          echo "JUCE at: $(cd JUCE && git describe --tags)"
+
+      - name: Configure (CMake -> Xcode project)
+        script: |
+          cmake -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
+
+      - name: List generated schemes
+        script: |
+          # Useful on first run: confirms what JUCE actually named the
+          # targets, so the build step below can be corrected if needed.
+          xcodebuild -project build-ios/ExpressionSynth.xcodeproj -list
+
+      - name: Build AUv3 target (unsigned)
+        script: |
+          xcodebuild \
+            -project build-ios/ExpressionSynth.xcodeproj \
+            -scheme ExpressionSynth_Standalone \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+    artifacts:
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - your.email@example.com   # replace; get build results without watching
+        notify:
+          success: true
+          failure: true
+
+  # ---------------------------------------------------------------
+  # 2. Signed build -> TestFlight -> iPad
+  # ---------------------------------------------------------------
+  ios-testflight:
+    name: iOS AUv3 -> TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      # Name of the App Store Connect API key as saved in Codemagic UI
+      # (Teams > Integrations > Developer Portal).
+      app_store_connect: codemagic
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.yourname.expressionsynth
+      vars:
+        JUCE_VERSION: *juce_version
+        IOS_DEPLOYMENT_TARGET: *ios_target
+        BUNDLE_ID_CONTAINER: "com.yourname.expressionsynth"
+        BUNDLE_ID_AUV3: "com.yourname.expressionsynth.auv3"
+        APP_STORE_APPLE_ID: "0000000000"   # numeric App ID from App Store Connect
+      groups:
+        - appstore_credentials   # must contain DEVELOPMENT_TEAM
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+
+    scripts:
+      - name: Fetch JUCE
+        script: |
+          git clone --depth 1 --branch "$JUCE_VERSION" \
+            https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Set build number
+        script: |
+          # App Store Connect rejects a build number it has seen before,
+          # so derive the next one rather than hardcoding.
+          BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0) + 1))
+          echo "Using build number $BUILD_NUMBER"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+
+      - name: Configure (CMake -> Xcode project)
+        script: |
+          cmake -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
+
+      - name: Fetch signing files
+        script: |
+          keychain initialize
+          # Both the container app AND the extension need provisioning
+          # profiles — the extension is a separate signed binary.
+          app-store-connect fetch-signing-files "$BUNDLE_ID_CONTAINER" \
+            --type IOS_APP_STORE --create
+          app-store-connect fetch-signing-files "$BUNDLE_ID_AUV3" \
+            --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+
+      - name: Build and archive
+        script: |
+          xcode-project build-ipa \
+            --project "build-ios/ExpressionSynth.xcodeproj" \
+            --scheme "ExpressionSynth_Standalone" \
+            --archive-flags "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
