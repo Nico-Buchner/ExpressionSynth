@@ -1,0 +1,216 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+ExpressionSynthProcessor::ExpressionSynthProcessor()
+    : AudioProcessor (BusesProperties()
+                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "PARAMS", SynthEngine::createParameterLayout())
+{
+    setupDefaultRoutes();
+
+    // Listen for articulation changes so the converter's profile stays
+    // in sync with the parameters without polling every block.
+    for (auto* id : { SynthEngine::articulationPresetParamID,
+                       SynthEngine::onsetThresholdParamID,
+                       SynthEngine::releaseThresholdParamID,
+                       SynthEngine::retriggerSensParamID,
+                       SynthEngine::pitchStabilityParamID,
+                       SynthEngine::glideModeParamID,
+                       SynthEngine::bendRangeParamID })
+        apvts.addParameterListener (id, this);
+
+    refreshArticulationProfile();
+}
+
+ExpressionSynthProcessor::~ExpressionSynthProcessor()
+{
+    for (auto* id : { SynthEngine::articulationPresetParamID,
+                       SynthEngine::onsetThresholdParamID,
+                       SynthEngine::releaseThresholdParamID,
+                       SynthEngine::retriggerSensParamID,
+                       SynthEngine::pitchStabilityParamID,
+                       SynthEngine::glideModeParamID,
+                       SynthEngine::bendRangeParamID })
+        apvts.removeParameterListener (id, this);
+
+    cancelPendingUpdate();
+}
+
+void ExpressionSynthProcessor::parameterChanged (const juce::String& paramID, float)
+{
+    if (paramID == SynthEngine::articulationPresetParamID)
+    {
+        // Selecting a preset overwrites the individual params with that
+        // preset's values â the user can then tweak from there, the way
+        // a hardware synth preset behaves. Deferred to the message
+        // thread because writing host-visible parameters from the audio
+        // thread is not real-time safe.
+        triggerAsyncUpdate();
+    }
+
+    refreshArticulationProfile();
+}
+
+void ExpressionSynthProcessor::refreshArticulationProfile()
+{
+    const int presetIndex = (int) apvts.getRawParameterValue (SynthEngine::articulationPresetParamID)->load();
+
+    // Start from the preset (which carries envelope times and debounce
+    // values not individually exposed), then override with the live
+    // params the user can adjust.
+    auto profile = ArticulationProfile::fromPresetIndex (presetIndex);
+
+    profile.onsetAmplitudeThreshold   = apvts.getRawParameterValue (SynthEngine::onsetThresholdParamID)->load();
+    profile.releaseAmplitudeThreshold = apvts.getRawParameterValue (SynthEngine::releaseThresholdParamID)->load();
+    profile.onsetRetriggerThreshold   = apvts.getRawParameterValue (SynthEngine::retriggerSensParamID)->load();
+    profile.stableBlocksRequiredForRetrigger = (int) apvts.getRawParameterValue (SynthEngine::pitchStabilityParamID)->load();
+    profile.bendRangeSemitones        = apvts.getRawParameterValue (SynthEngine::bendRangeParamID)->load();
+    profile.pitchMode = apvts.getRawParameterValue (SynthEngine::glideModeParamID)->load() > 0.5f
+                          ? ArticulationProfile::PitchMode::Glide
+                          : ArticulationProfile::PitchMode::Quantized;
+
+    pitchToMidi.setProfile (profile);
+    featureExtractor.setEnvelopeTimes (profile.ampAttackMs, profile.ampReleaseMs);
+}
+
+void ExpressionSynthProcessor::handleAsyncUpdate()
+{
+    // Runs on the message thread. Copies the selected preset's values
+    // into the individual parameters so the UI reflects them and the
+    // user can tweak onward from that starting point.
+    const int presetIndex = (int) apvts.getRawParameterValue (SynthEngine::articulationPresetParamID)->load();
+    const auto preset = ArticulationProfile::fromPresetIndex (presetIndex);
+
+    auto setParam = [this] (const char* id, float value)
+    {
+        if (auto* p = apvts.getParameter (id))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+            p->endChangeGesture();
+        }
+    };
+
+    setParam (SynthEngine::onsetThresholdParamID,   preset.onsetAmplitudeThreshold);
+    setParam (SynthEngine::releaseThresholdParamID, preset.releaseAmplitudeThreshold);
+    setParam (SynthEngine::retriggerSensParamID,    preset.onsetRetriggerThreshold);
+    setParam (SynthEngine::pitchStabilityParamID,   (float) preset.stableBlocksRequiredForRetrigger);
+    setParam (SynthEngine::bendRangeParamID,        preset.bendRangeSemitones);
+    setParam (SynthEngine::glideModeParamID,
+               preset.pitchMode == ArticulationProfile::PitchMode::Glide ? 1.0f : 0.0f);
+}
+
+void ExpressionSynthProcessor::setupDefaultRoutes()
+{
+    using Source = ExpressionMapper::Source;
+    using Dest = ExpressionMapper::Destination;
+    using Curve = ExpressionMapper::Curve;
+
+    expressionMapper.clearRoutes();
+
+    // Amplitude -> output gain, fairly direct and fast so dynamics track
+    expressionMapper.addRoute ({ Source::Amplitude, Dest::Amplitude,
+                                  Curve::Linear, 1.0f, 15.0f });
+
+    // Spectral centroid (brightness) -> filter cutoff. Exponential curve
+    // because a bright source should open the filter dramatically while
+    // quiet/dull input stays closed.
+    expressionMapper.addRoute ({ Source::SpectralCentroid, Dest::FilterCutoff,
+                                  Curve::Exponential, 1.0f, 30.0f });
+
+    // Note: gross pitch is no longer routed through here â it's handled
+    // by PitchToMidiConverter selecting the actual note, with fine pitch
+    // (cents deviation / vibrato) applied directly in processBlock().
+}
+
+void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    featureExtractor.prepare (sampleRate, samplesPerBlock);
+    expressionMapper.prepare (sampleRate);
+    pitchToMidi.prepare (sampleRate);
+    synthEngine.prepare (sampleRate, samplesPerBlock);
+    analysisBuffer.setSize (1, samplesPerBlock);
+
+    pitchBendSmoother.reset (sampleRate, 0.03); // 30ms â fast enough for vibrato, no zipper noise
+    pitchBendSmoother.setCurrentAndTargetValue (0.0f);
+    modulation.reset();
+
+    // prepare() resets envelope coefficients to defaults, so re-apply
+    // the active profile's attack/release afterwards.
+    refreshArticulationProfile();
+}
+
+void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ignoreUnused (midi); // note-triggering source is audio-derived, not host MIDI
+
+    // 1. Sum input to mono for analysis (don't touch `buffer` yet â we
+    //    need it clean for the synth to render into afterward).
+    analysisBuffer.setSize (1, buffer.getNumSamples(), false, false, true);
+    analysisBuffer.clear();
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        analysisBuffer.addFrom (0, 0, buffer, ch, 0, buffer.getNumSamples(),
+                                 1.0f / (float) buffer.getNumChannels());
+
+    // 2. Extract expression features from the input audio.
+    featureExtractor.process (analysisBuffer);
+    const auto& features = featureExtractor.getLatestFeatures();
+
+    // 3. Convert pitch/amplitude into note-on/off events for this block.
+    generatedMidi.clear();
+    pitchToMidi.process (features, generatedMidi, buffer.getNumSamples());
+
+    // 4. Push timbre/amplitude features into the modulation state.
+    expressionMapper.apply (features, modulation, buffer.getNumSamples());
+
+    // 5. Fine pitch expression: cents deviation of the detected pitch
+    //    from the note PitchToMidiConverter selected, smoothed. This is
+    //    what carries vibrato/expressive bend on top of the stable note
+    //    â separate from ExpressionMapper since it depends on the note
+    //    converter's state, not just the raw feature values.
+    const int activeNote = pitchToMidi.getCurrentNote();
+    if (activeNote >= 0 && features.pitchHz > 0.0f)
+    {
+        const float noteHz = PitchToMidiConverter::midiNoteToFrequency (activeNote);
+        const float semitonesAway = 12.0f * std::log2 (features.pitchHz / noteHz);
+        const float bendRange = pitchToMidi.getProfile().bendRangeSemitones;
+        pitchBendSmoother.setTargetValue (juce::jlimit (-bendRange, bendRange, semitonesAway));
+    }
+    else
+    {
+        pitchBendSmoother.setTargetValue (0.0f);
+    }
+
+    pitchBendSmoother.skip (juce::jmax (0, buffer.getNumSamples() - 1));
+    modulation.pitchBendSemitones.store (pitchBendSmoother.getNextValue());
+
+    // 6. Clear the buffer (input audio itself isn't passed through â
+    //    this plugin replaces it with the synth) and render using the
+    //    generated notes.
+    buffer.clear();
+    synthEngine.renderNextBlock (buffer, generatedMidi, apvts, modulation);
+}
+
+juce::AudioProcessorEditor* ExpressionSynthProcessor::createEditor()
+{
+    return new ExpressionSynthEditor (*this);
+}
+
+void ExpressionSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto state = apvts.copyState().createXml())
+        copyXmlToBinary (*state, destData);
+}
+
+void ExpressionSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+}
+
+// This creates new instances of the plugin
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new ExpressionSynthProcessor();
+}
