@@ -50,7 +50,8 @@ juce_add_plugin(ExpressionSynth
     APP_GROUPS_ENABLED TRUE
     APP_GROUP_IDS "${APP_GROUP_ID}"
 
-    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait
+        IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+
     REQUIRES_FULL_SCREEN FALSE
 )
 
