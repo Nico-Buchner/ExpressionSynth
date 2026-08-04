@@ -42,7 +42,7 @@ void ExpressionSynthProcessor::parameterChanged (const juce::String& paramID, fl
     if (paramID == SynthEngine::articulationPresetParamID)
     {
         // Selecting a preset overwrites the individual params with that
-        // preset's values â the user can then tweak from there, the way
+        // preset's values — the user can then tweak from there, the way
         // a hardware synth preset behaves. Deferred to the message
         // thread because writing host-visible parameters from the audio
         // thread is not real-time safe.
@@ -119,7 +119,7 @@ void ExpressionSynthProcessor::setupDefaultRoutes()
     expressionMapper.addRoute ({ Source::SpectralCentroid, Dest::FilterCutoff,
                                   Curve::Exponential, 1.0f, 30.0f });
 
-    // Note: gross pitch is no longer routed through here â it's handled
+    // Note: gross pitch is no longer routed through here — it's handled
     // by PitchToMidiConverter selecting the actual note, with fine pitch
     // (cents deviation / vibrato) applied directly in processBlock().
 }
@@ -132,7 +132,7 @@ void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerB
     synthEngine.prepare (sampleRate, samplesPerBlock);
     analysisBuffer.setSize (1, samplesPerBlock);
 
-    pitchBendSmoother.reset (sampleRate, 0.03); // 30ms â fast enough for vibrato, no zipper noise
+    pitchBendSmoother.reset (sampleRate, 0.03); // 30ms — fast enough for vibrato, no zipper noise
     pitchBendSmoother.setCurrentAndTargetValue (0.0f);
     modulation.reset();
 
@@ -145,7 +145,7 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 {
     juce::ignoreUnused (midi); // note-triggering source is audio-derived, not host MIDI
 
-    // 1. Sum input to mono for analysis (don't touch `buffer` yet â we
+    // 1. Sum input to mono for analysis (don't touch `buffer` yet — we
     //    need it clean for the synth to render into afterward).
     analysisBuffer.setSize (1, buffer.getNumSamples(), false, false, true);
     analysisBuffer.clear();
@@ -167,7 +167,7 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // 5. Fine pitch expression: cents deviation of the detected pitch
     //    from the note PitchToMidiConverter selected, smoothed. This is
     //    what carries vibrato/expressive bend on top of the stable note
-    //    â separate from ExpressionMapper since it depends on the note
+    //    — separate from ExpressionMapper since it depends on the note
     //    converter's state, not just the raw feature values.
     const int activeNote = pitchToMidi.getCurrentNote();
     if (activeNote >= 0 && features.pitchHz > 0.0f)
@@ -185,7 +185,7 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     pitchBendSmoother.skip (juce::jmax (0, buffer.getNumSamples() - 1));
     modulation.pitchBendSemitones.store (pitchBendSmoother.getNextValue());
 
-    // 6. Clear the buffer (input audio itself isn't passed through â
+    // 6. Clear the buffer (input audio itself isn't passed through —
     //    this plugin replaces it with the synth) and render using the
     //    generated notes.
     buffer.clear();

@@ -3,28 +3,28 @@
 #include <juce_dsp/juce_dsp.h>
 #include "ArticulationProfile.h"
 #include "ModulationState.h"
+#include "MorphOscillator.h"
 
-/**
-    Deliberately simple to start: one oscillator + filter + amp envelope
-    per voice. The point of v1 is proving the mapping feels expressive,
-    not synth complexity — grow this once ExpressionMapper is tuned.
-
-    Parameter handling: APVTS holds the user's base settings (and stays
-    normally host-automatable); ModulationState holds live analysis-driven
-    modulation. Voices combine the two at render time. See
-    ModulationState.h for why modulation is deliberately not written back
-    into APVTS.
-*/
-
-/** Accepts every note and channel — this synth has one timbre, and
-    voice allocation is handled by juce::Synthesiser. Without at least
-    one sound registered, Synthesiser::noteOn matches nothing and the
-    synth is silent, so this is not optional. */
 class SynthSound : public juce::SynthesiserSound
 {
 public:
     bool appliesToNote (int) override { return true; }
     bool appliesToChannel (int) override { return true; }
+};
+
+// Everything a voice needs for one block, gathered once rather than
+// passed as a long argument list.
+struct VoiceParams
+{
+    float cutoffHz = 800.0f;
+    float resonance = 0.7f;
+    float pitchBendSemitones = 0.0f;
+    float morph = 0.0f;
+    int unisonCount = 1;
+    float detuneCents = 0.0f;
+    float spread = 0.0f;
+    float gain = 0.8f;
+    juce::ADSR::Parameters adsr { 0.01f, 0.15f, 0.8f, 0.3f };
 };
 
 class SynthVoice : public juce::SynthesiserVoice
@@ -35,8 +35,6 @@ public:
         return dynamic_cast<SynthSound*> (sound) != nullptr;
     }
 
-    // Must be called before any rendering — juce::dsp objects default to
-    // a zero sample rate and produce silence or garbage until prepared.
     void prepare (const juce::dsp::ProcessSpec& spec);
 
     void startNote (int midiNoteNumber, float velocity,
@@ -47,23 +45,30 @@ public:
 
     void renderNextBlock (juce::AudioBuffer<float>&, int startSample, int numSamples) override;
 
-    // Called each block before rendering, with the already-combined
-    // base+modulation values.
-    void updateFromParams (float cutoffHz, float pitchBendSemitones,
-                            float filterResonance, float ampGain);
+    void updateFromParams (const VoiceParams& p);
 
 private:
-    juce::dsp::Oscillator<float> osc { [] (float x) { return std::sin (x); } };
+    void refreshUnison (int count, float detuneCents, float spread);
+
+    static constexpr int maxUnison = 4;
+
+    MorphOscillator oscs[maxUnison];
+    float detuneRatio[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+    float panL[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+    float panR[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+
     juce::dsp::StateVariableTPTFilter<float> filter;
     juce::ADSR envelope;
-    juce::ADSR::Parameters envParams { 0.01f, 0.1f, 0.8f, 0.3f };
 
     double baseFrequency = 440.0;
     float currentVelocity = 0.0f;
 
-    // Smoothed so per-block modulation changes don't produce zipper
-    // noise at block boundaries.
-    juce::SmoothedValue<float> amplitudeGain { 1.0f };
+    int activeUnison = 1;
+    float unisonScale = 1.0f;
+    float cachedDetune = -1.0f;
+    float cachedSpread = -1.0f;
+
+    juce::SmoothedValue<float> outputGain { 0.8f };
 
     bool isPrepared = false;
 };
@@ -73,16 +78,21 @@ class SynthEngine
 public:
     void prepare (double sampleRate, int samplesPerBlock, int numVoices = 8);
 
-    // --- Base synth parameters (user-set, host-automatable) ---
     static constexpr auto cutoffParamID    = "synthCutoff";
     static constexpr auto resonanceParamID = "synthResonance";
     static constexpr auto ampLevelParamID  = "synthLevel";
-
-    // How far analysis-driven modulation can push the filter, in octaves
-    // above the user's base cutoff.
     static constexpr auto cutoffModDepthParamID = "synthCutoffModDepth";
 
-    // --- Articulation detection params ---
+    static constexpr auto morphParamID   = "synthMorph";
+    static constexpr auto unisonParamID  = "synthUnison";
+    static constexpr auto detuneParamID  = "synthDetune";
+    static constexpr auto spreadParamID  = "synthSpread";
+
+    static constexpr auto attackParamID  = "synthAttack";
+    static constexpr auto decayParamID   = "synthDecay";
+    static constexpr auto sustainParamID = "synthSustain";
+    static constexpr auto releaseParamID = "synthRelease";
+
     static constexpr auto articulationPresetParamID = "artPreset";
     static constexpr auto onsetThresholdParamID     = "artOnsetThreshold";
     static constexpr auto releaseThresholdParamID   = "artReleaseThreshold";
