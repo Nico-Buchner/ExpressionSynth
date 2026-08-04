@@ -5,13 +5,14 @@ void FeatureExtractor::prepare (double newSampleRate, int newBlockSize)
     sampleRate = newSampleRate;
     blockSize = newBlockSize;
 
-    // Defaults; overridden per-articulation via setEnvelopeTimes().
     setEnvelopeTimes (5.0f, 80.0f);
+    setPitchRange (75.0f, 2000.0f);
 
     pitchScratch.setSize (1, pitchBufferSize);
     yinDiff.assign (pitchBufferSize / 2, 0.0f);
     yinCmnd.assign (pitchBufferSize / 2, 0.0f);
-    fftBuffer.setSize (1, (1 << (fftOrder + 1))); // real+imag interleaved, JUCE FFT convention
+
+    fftBuffer.setSize (1, (1 << (fftOrder + 1)));
     window.malloc (1 << fftOrder);
     juce::dsp::WindowingFunction<float>::fillWindowingTables (
         window.getData(), 1 << fftOrder, juce::dsp::WindowingFunction<float>::hann);
@@ -22,13 +23,20 @@ void FeatureExtractor::prepare (double newSampleRate, int newBlockSize)
 
 void FeatureExtractor::setEnvelopeTimes (float attackMs, float releaseMs)
 {
-    // Guard against zero/negative times producing a divide-by-zero in
-    // the coefficient calculation.
     attackMs  = juce::jmax (0.1f, attackMs);
     releaseMs = juce::jmax (0.1f, releaseMs);
-
     attackCoeff  = std::exp (-1.0f / (float) (attackMs  * 0.001 * sampleRate));
     releaseCoeff = std::exp (-1.0f / (float) (releaseMs * 0.001 * sampleRate));
+}
+
+void FeatureExtractor::setPitchRange (float minHz, float maxHz)
+{
+    const int hardLimit = pitchBufferSize / 2;
+    minHz = juce::jmax (20.0f, minHz);
+    maxHz = juce::jmax (minHz + 1.0f, maxHz);
+
+    tauMin = juce::jlimit (2, hardLimit - 1, (int) (sampleRate / maxHz));
+    tauMax = juce::jlimit (tauMin + 1, hardLimit, (int) (sampleRate / minHz) + 1);
 }
 
 void FeatureExtractor::reset()
@@ -43,8 +51,8 @@ void FeatureExtractor::reset()
 void FeatureExtractor::process (const juce::AudioBuffer<float>& input)
 {
     updateAmplitude (input);
-    updatePitch (input);          // TODO: implement YIN difference function
-    updateSpectralFeatures (input); // TODO: FFT -> centroid + flatness
+    updatePitch (input);
+    updateSpectralFeatures (input);
     updateOnset (current.amplitude);
 }
 
@@ -66,8 +74,6 @@ void FeatureExtractor::updateAmplitude (const juce::AudioBuffer<float>& input)
 
 void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
 {
-    // Maintain a rolling pitchBufferSize-sample window: shift left by
-    // however many new samples arrived this block, append the rest.
     const int numNew = input.getNumSamples();
     auto* scratch = pitchScratch.getWritePointer (0);
     auto* in = input.getReadPointer (0);
@@ -82,19 +88,14 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
         std::copy (in, in + numNew, scratch + (pitchBufferSize - numNew));
     }
 
-    const int maxTau = pitchBufferSize / 2;
+    const int windowLen = pitchBufferSize / 2;
 
-    // --- Step 1: difference function ---
-    // d(tau) = sum_j (x[j] - x[j+tau])^2
-    // This is the expensive O(maxTau^2) part — if profiling shows this
-    // too costly on iPad, swap for an FFT-based autocorrelation instead
-    // (same result, O(n log n)); keeping the direct version first since
-    // it's easier to verify correctness against.
-    yinDiff[0] = 0.0f;
-    for (int tau = 1; tau < maxTau; ++tau)
+    // Step 1: difference function, only over the tau range implied by
+    // the configured min/max frequency.
+    for (int tau = 1; tau < tauMax; ++tau)
     {
         float sum = 0.0f;
-        for (int j = 0; j < maxTau; ++j)
+        for (int j = 0; j < windowLen; ++j)
         {
             const float delta = scratch[j] - scratch[j + tau];
             sum += delta * delta;
@@ -102,13 +103,11 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
         yinDiff[(size_t) tau] = sum;
     }
 
-    // --- Step 2: cumulative mean normalized difference (CMND) ---
-    // Normalizes so early lags aren't unfairly favored; this is what
-    // separates YIN from plain autocorrelation and is why it handles
-    // octave errors much better.
+    // Step 2: cumulative mean normalized difference. Must accumulate
+    // from tau 1 even below tauMin, or the normalisation is wrong.
     yinCmnd[0] = 1.0f;
     float runningSum = 0.0f;
-    for (int tau = 1; tau < maxTau; ++tau)
+    for (int tau = 1; tau < tauMax; ++tau)
     {
         runningSum += yinDiff[(size_t) tau];
         yinCmnd[(size_t) tau] = runningSum > 0.0f
@@ -116,16 +115,13 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
             : 1.0f;
     }
 
-    // --- Step 3: absolute threshold ---
-    // Walk forward until CMND dips below threshold, then continue to
-    // the local minimum from there — this avoids locking onto the very
-    // first dip if it's noise rather than the true period.
+    // Step 3: absolute threshold, searched only within range.
     int tauEstimate = -1;
-    for (int tau = 2; tau < maxTau; ++tau)
+    for (int tau = tauMin; tau < tauMax; ++tau)
     {
         if (yinCmnd[(size_t) tau] < yinThreshold)
         {
-            while (tau + 1 < maxTau && yinCmnd[(size_t) (tau + 1)] < yinCmnd[(size_t) tau])
+            while (tau + 1 < tauMax && yinCmnd[(size_t) (tau + 1)] < yinCmnd[(size_t) tau])
                 ++tau;
             tauEstimate = tau;
             break;
@@ -134,19 +130,14 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
 
     if (tauEstimate == -1)
     {
-        // No period found under threshold — likely unvoiced/noisy/silent.
-        // Decay confidence rather than snapping to zero, so a brief
-        // dropout mid-note doesn't yank pitch-mapped parameters.
         current.pitchConfidence = juce::jmax (0.0f, current.pitchConfidence - 0.1f);
         current.pitchHz = lastConfidentPitchHz;
         return;
     }
 
-    // --- Step 4: parabolic interpolation for sub-sample tau precision ---
-    // Without this, pitch estimates quantize to sampleRate/integer-tau
-    // steps, which is audibly steppy on pitch-bend mappings.
+    // Step 4: parabolic interpolation for sub-sample precision.
     float betterTau = (float) tauEstimate;
-    if (tauEstimate > 0 && tauEstimate < maxTau - 1)
+    if (tauEstimate > tauMin && tauEstimate < tauMax - 1)
     {
         const float s0 = yinCmnd[(size_t) (tauEstimate - 1)];
         const float s1 = yinCmnd[(size_t) tauEstimate];
@@ -164,11 +155,8 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
     }
 }
 
-void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>& /*input*/)
+void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>&)
 {
-    // Shares the pitch tracker's rolling window rather than a second
-    // buffer — both are sized 2048. updatePitch() must run before this
-    // in process() so the window is current (it does).
     static_assert (pitchBufferSize == (1 << fftOrder),
                     "FFT window and pitch buffer sizes are assumed equal");
 
@@ -180,9 +168,6 @@ void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>& /
     for (int i = 0; i < fftSize; ++i)
         fftData[i] = source[i] * window[(size_t) i];
 
-    // Writes magnitude-only spectrum into the first fftSize/2 bins —
-    // simpler than a full complex transform since centroid/flatness
-    // only need magnitude, not phase.
     fft->performFrequencyOnlyForwardTransform (fftData);
 
     const int numBins = fftSize / 2;
@@ -193,8 +178,6 @@ void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>& /
     float logMagSum = 0.0f;
     int nonZeroBins = 0;
 
-    // Skip bin 0 (DC) — it carries no pitch/timbre information and can
-    // dominate the centroid if there's any input offset.
     for (int bin = 1; bin < numBins; ++bin)
     {
         const float mag = fftData[bin];
@@ -217,9 +200,6 @@ void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>& /
 
     if (nonZeroBins > 0)
     {
-        // Flatness = geometric mean / arithmetic mean of the magnitude
-        // spectrum. Near 1.0 = noise-like (flat spectrum); near 0.0 =
-        // tonal (energy concentrated in few bins).
         const float geometricMean = std::exp (logMagSum / (float) nonZeroBins);
         const float arithmeticMean = magSum / (float) numBins;
         current.spectralFlatness = arithmeticMean > 1.0e-9f
@@ -231,6 +211,6 @@ void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>& /
 void FeatureExtractor::updateOnset (float currentAmplitude)
 {
     const float delta = currentAmplitude - previousAmplitude;
-    current.onsetStrength = juce::jlimit (0.0f, 1.0f, delta * 4.0f); // scale factor, tune by ear
+    current.onsetStrength = juce::jlimit (0.0f, 1.0f, delta * 4.0f);
     previousAmplitude = currentAmplitude;
 }
