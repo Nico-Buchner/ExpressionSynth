@@ -15,7 +15,7 @@
     A single threshold set can't serve all of these, so the converter
     reads its behaviour from one of these instead of hardcoded values.
 
-    All fields are plain data — PitchToMidiConverter holds one by value
+    All fields are plain data - PitchToMidiConverter holds one by value
     and PluginProcessor swaps it at runtime from APVTS parameters, so
     retuning never requires a rebuild.
 */
@@ -28,7 +28,7 @@ struct ArticulationProfile
         Quantized,
 
         // Pitch changes bend the sounding note instead of retriggering,
-        // up to bendRangeSemitones — beyond that a retrigger still
+        // up to bendRangeSemitones - beyond that a retrigger still
         // fires. Correct for voice, fretless strings, slide guitar,
         // anything with meaningful portamento.
         Glide
@@ -60,7 +60,7 @@ struct ArticulationProfile
 
     // ---- Presets ----
     // Starting points tuned by reasoning about each source's envelope
-    // and pitch behaviour, NOT by measurement — expect to adjust these
+    // and pitch behaviour, NOT by measurement - expect to adjust these
     // by ear on first test. That's exactly why they're runtime-editable.
 
     /** Guitar, harp, pizzicato strings, clav. Sharp attack, immediate
@@ -88,10 +88,10 @@ struct ArticulationProfile
     {
         ArticulationProfile p;
         p.name = "Bowed";
-        p.onsetAmplitudeThreshold = 0.035f;  // low — a bow can enter very quietly
+        p.onsetAmplitudeThreshold = 0.035f;  // low - a bow can enter very quietly
         p.releaseAmplitudeThreshold = 0.015f;
         p.stableBlocksRequiredForRetrigger = 5; // vibrato-tolerant
-        p.onsetRetriggerThreshold = 0.55f;   // high — bow changes shouldn't retrigger
+        p.onsetRetriggerThreshold = 0.55f;   // high - bow changes shouldn't retrigger
         p.retriggerDebounceBlocks = 8;
         p.pitchMode = PitchMode::Glide;      // portamento is idiomatic
         p.bendRangeSemitones = 2.0f;
@@ -110,7 +110,7 @@ struct ArticulationProfile
         p.onsetAmplitudeThreshold = 0.05f;
         p.releaseAmplitudeThreshold = 0.02f;
         p.stableBlocksRequiredForRetrigger = 3;
-        p.onsetRetriggerThreshold = 0.25f;   // sensitive — tonguing is the point
+        p.onsetRetriggerThreshold = 0.25f;   // sensitive - tonguing is the point
         p.retriggerDebounceBlocks = 3;       // short, to allow fast tonguing
         p.pitchMode = PitchMode::Quantized;
         p.bendRangeSemitones = 2.0f;
@@ -129,7 +129,7 @@ struct ArticulationProfile
         p.onsetAmplitudeThreshold = 0.05f;
         p.releaseAmplitudeThreshold = 0.018f;
         p.stableBlocksRequiredForRetrigger = 6; // very tolerant of scoops/slides
-        p.onsetRetriggerThreshold = 0.60f;   // high — reject consonant transients
+        p.onsetRetriggerThreshold = 0.60f;   // high - reject consonant transients
         p.retriggerDebounceBlocks = 10;
         p.pitchMode = PitchMode::Glide;      // scoops and slides preserved as bend
         p.bendRangeSemitones = 3.0f;         // wider, voices slide further
@@ -144,14 +144,14 @@ struct ArticulationProfile
     {
         ArticulationProfile p;
         p.name = "Percussive";
-        p.onsetAmplitudeThreshold = 0.10f;   // high — attacks are unambiguous
+        p.onsetAmplitudeThreshold = 0.10f;   // high - attacks are unambiguous
         p.releaseAmplitudeThreshold = 0.02f;
         p.stableBlocksRequiredForRetrigger = 2;
         p.onsetRetriggerThreshold = 0.22f;   // sensitive, for fast repeats
         p.retriggerDebounceBlocks = 2;       // very short debounce
         p.pitchMode = PitchMode::Quantized;
         p.bendRangeSemitones = 1.0f;
-        p.ampAttackMs = 2.0f;                // fastest — catch the strike
+        p.ampAttackMs = 2.0f;                // fastest - catch the strike
         p.ampReleaseMs = 60.0f;
         return p;
     }

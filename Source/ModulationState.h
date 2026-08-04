@@ -30,7 +30,13 @@ struct ModulationState
     // Direct gain multiplier, 0-1.
     std::atomic<float> amplitude       { 1.0f };
 
-    // Absolute, in semitones — carries cents-deviation pitch expression
+    // 0-1 offset applied to the oscillator's waveshape position. This is
+    // the most direct timbre mapping the plugin has: the input's own
+    // harmonic content drives the output's harmonic content, rather than
+    // subtractively shaping a fixed waveform.
+    std::atomic<float> oscMorph        { 0.0f };
+
+    // Absolute, in semitones - carries cents-deviation pitch expression
     // (vibrato/bend) on top of the note PitchToMidiConverter selected.
     std::atomic<float> pitchBendSemitones { 0.0f };
 
@@ -39,6 +45,7 @@ struct ModulationState
         filterCutoff.store (0.0f);
         filterResonance.store (0.0f);
         amplitude.store (1.0f);
+        oscMorph.store (0.0f);
         pitchBendSemitones.store (0.0f);
     }
 };

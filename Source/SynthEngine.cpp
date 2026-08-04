@@ -210,6 +210,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
         juce::NormalisableRange<float> (0.0f, 6.0f), 4.0f));
 
     params.push_back (std::make_unique<Param> (
+        juce::ParameterID { morphModDepthParamID, 1 }, "Waveshape Mod Depth",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    params.push_back (std::make_unique<Param> (
         juce::ParameterID { attackParamID, 1 }, "Attack (ms)",
         juce::NormalisableRange<float> (1.0f, 2000.0f, 0.1f, 0.3f), 10.0f));
 
@@ -280,7 +284,13 @@ void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
                                   + modulation.filterResonance.load() * 5.0f);
 
     vp.pitchBendSemitones = modulation.pitchBendSemitones.load();
-    vp.morph       = params.getRawParameterValue (morphParamID)->load();
+    // Base waveshape plus analysis-driven offset. A bright input pushes
+    // the oscillator toward saw and square; a dull one falls back to
+    // triangle, so output timbre tracks input timbre directly.
+    vp.morph = juce::jlimit (0.0f, 1.0f,
+                              params.getRawParameterValue (morphParamID)->load()
+                              + modulation.oscMorph.load()
+                                * params.getRawParameterValue (morphModDepthParamID)->load());
     vp.unisonCount = (int) params.getRawParameterValue (unisonParamID)->load();
     vp.detuneCents = params.getRawParameterValue (detuneParamID)->load();
     vp.spread      = params.getRawParameterValue (spreadParamID)->load();

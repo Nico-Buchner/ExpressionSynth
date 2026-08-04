@@ -83,7 +83,7 @@ void PitchToMidiConverter::process (const FeatureExtractor::Features& features,
     if (detectedNote != currentNote)
     {
         // In Glide mode, a pitch move within the bend range is expression,
-        // not a new note — PluginProcessor's cents-deviation calculation
+        // not a new note - PluginProcessor's cents-deviation calculation
         // bends the sounding note instead. Only a move beyond what the
         // bend range can represent forces a retrigger.
         if (profile.pitchMode == ArticulationProfile::PitchMode::Glide)
@@ -117,14 +117,14 @@ void PitchToMidiConverter::process (const FeatureExtractor::Features& features,
         return;
     }
 
-    // Pitch unchanged — clear any pending candidate from a prior block.
+    // Pitch unchanged - clear any pending candidate from a prior block.
     candidateNote = -1;
     candidateHoldCount = 0;
 
     // Same-pitch re-attack: a fresh onset (re-picked string, re-tongued
     // note, restruck key) while still sustaining the same note. Gated
     // by a debounce window so the attack transient of the *current*
-    // note — which itself spiked onsetStrength when it started — can't
+    // note - which itself spiked onsetStrength when it started - can't
     // trigger a second, spurious retrigger a block or two later.
     if (features.onsetStrength >= profile.onsetRetriggerThreshold
         && blocksSinceLastTrigger >= profile.retriggerDebounceBlocks)

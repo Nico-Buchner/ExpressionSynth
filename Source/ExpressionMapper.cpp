@@ -39,7 +39,7 @@ void ExpressionMapper::apply (const FeatureExtractor::Features& features,
 
         smoothers[i].setTargetValue (shaped);
 
-        // Advance a whole block, not one sample — smoothing times are
+        // Advance a whole block, not one sample - smoothing times are
         // specified in real milliseconds and must behave that way
         // regardless of block size.
         smoothers[i].skip (juce::jmax (0, numSamples - 1));
@@ -51,6 +51,7 @@ void ExpressionMapper::apply (const FeatureExtractor::Features& features,
             case Destination::FilterResonance: modulation.filterResonance.store (smoothed); break;
             case Destination::Amplitude:       modulation.amplitude.store (smoothed); break;
             case Destination::PitchBend:       modulation.pitchBendSemitones.store (smoothed); break;
+            case Destination::OscMorph:        modulation.oscMorph.store (smoothed); break;
         }
     }
 }

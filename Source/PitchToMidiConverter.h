@@ -5,7 +5,7 @@
 
 /**
     Converts continuous pitch + amplitude into discrete MIDI note events.
-    Monophonic only — one note active at a time, which matches YIN's
+    Monophonic only - one note active at a time, which matches YIN's
     single-pitch-per-block assumption in FeatureExtractor.
 
     All behavioural thresholds live in an ArticulationProfile rather than
@@ -30,7 +30,7 @@ public:
 
     // Call once per block, after FeatureExtractor::process(). Appends
     // note-on/off messages (if any state change occurred) into midiOut.
-    // Resolution is block-rate — a smaller block size lowers trigger
+    // Resolution is block-rate - a smaller block size lowers trigger
     // latency at the cost of more frequent YIN/FFT computation.
     void process (const FeatureExtractor::Features& features,
                   juce::MidiBuffer& midiOut, int numSamples);

@@ -17,7 +17,7 @@ class ExpressionMapper
 {
 public:
     enum class Source { Amplitude, Pitch, SpectralCentroid, SpectralFlatness, Onset };
-    enum class Destination { FilterCutoff, FilterResonance, Amplitude, PitchBend };
+    enum class Destination { FilterCutoff, FilterResonance, Amplitude, PitchBend, OscMorph };
     enum class Curve  { Linear, Exponential, Logarithmic };
 
     struct Route
@@ -39,7 +39,7 @@ public:
 
     // Call once per block after FeatureExtractor::process(). numSamples
     // is required so smoothing advances by a whole block rather than a
-    // single sample — otherwise a 20ms smoothing time would take
+    // single sample - otherwise a 20ms smoothing time would take
     // 20ms * blockSize to actually arrive.
     void apply (const FeatureExtractor::Features& features,
                 ModulationState& modulation, int numSamples);

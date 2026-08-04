@@ -82,6 +82,7 @@ public:
     static constexpr auto resonanceParamID = "synthResonance";
     static constexpr auto ampLevelParamID  = "synthLevel";
     static constexpr auto cutoffModDepthParamID = "synthCutoffModDepth";
+    static constexpr auto morphModDepthParamID  = "synthMorphModDepth";
 
     static constexpr auto morphParamID   = "synthMorph";
     static constexpr auto unisonParamID  = "synthUnison";
