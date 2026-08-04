@@ -21,13 +21,13 @@ juce_add_plugin(ExpressionSynth
     BUNDLE_ID "com.yourname.expressionsynth"
     PLUGIN_MANUFACTURER_CODE Manu      # must contain at least one uppercase char
     PLUGIN_CODE Exsy                   # exactly 4 chars
-    IS_SYNTH TRUE
+    IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    VST3_CATEGORIES "Instrument" "Synth"
-    AU_MAIN_TYPE "kAudioUnitType_MusicDevice"
+    VST3_CATEGORIES "Fx”
+    AU_MAIN_TYPE "kAudioUnitType_MusicEffect"
     PRODUCT_NAME "ExpressionSynth"
 
     # iOS only supports AUv3. VST3 will not load and must not be listed
