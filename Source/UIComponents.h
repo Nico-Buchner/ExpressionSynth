@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SpectrumData.h"
 #include "MorphOscillator.h"
+#include "ArticulationProfile.h"
 
 // Shared palette. The rule throughout: anything chromatic is data coming
 // from the audio, anything bone-coloured is something the user sets.
@@ -151,7 +152,18 @@ public:
     // the level it actually gates.
     void addMarker (juce::RangedAudioParameter* param, juce::String tip, bool primary)
     {
-        markers.push_back ({ param, std::move (tip), primary });
+        markers.push_back ({ param, std::move (tip), primary, -1.0f });
+    }
+
+    // In adaptive mode the analyser owns these values, so the markers
+    // display where the thresholds have moved to and stop responding to
+    // drags. Showing them frozen at the manual settings would be a lie.
+    void setLocked (bool shouldLock) { locked = shouldLock; }
+
+    void setMarkerOverride (int index, float value)
+    {
+        if (juce::isPositiveAndBelow (index, (int) markers.size()))
+            markers[(size_t) index].override_ = value;
     }
 
     void setValue (float v) { value = juce::jlimit (0.0f, 1.0f, v); }
@@ -195,9 +207,14 @@ public:
             if (m.param == nullptr)
                 continue;
 
-            const float pos = juce::jlimit (0.0f, 1.0f, m.param->convertFrom0to1 (m.param->getValue()));
+            const float pos = juce::jlimit (0.0f, 1.0f, m.override_ >= 0.0f
+                ? m.override_
+                : m.param->convertFrom0to1 (m.param->getValue()));
+
             const float x = tr.getX() + pos * tr.getWidth();
-            const auto c = m.primary ? Palette::bone : juce::Colour (0xff7f8492);
+            auto c = m.primary ? Palette::bone : juce::Colour (0xff7f8492);
+            if (locked)
+                c = c.withAlpha (0.55f);
 
             g.setColour (c);
             g.fillRect (x - 0.5f, tr.getY() - 3.0f, 1.0f, tr.getHeight() + 6.0f);
@@ -205,8 +222,8 @@ public:
         }
     }
 
-    void mouseDown (const juce::MouseEvent& e) override { dragMarker (e); }
-    void mouseDrag (const juce::MouseEvent& e) override { dragMarker (e); }
+    void mouseDown (const juce::MouseEvent& e) override { if (! locked) dragMarker (e); }
+    void mouseDrag (const juce::MouseEvent& e) override { if (! locked) dragMarker (e); }
 
     static constexpr int preferredHeight = 40;
 
@@ -216,6 +233,7 @@ private:
         juce::RangedAudioParameter* param;
         juce::String tip;
         bool primary;
+        float override_;   // negative when the parameter is in charge
     };
 
     void dragMarker (const juce::MouseEvent& e)
@@ -251,8 +269,173 @@ private:
     juce::String name;
     juce::Colour colour;
     float value = 0.0f;
+    bool locked = false;
     std::vector<Marker> markers;
     juce::Rectangle<int> trackArea;
+};
+
+// ---------------------------------------------------------------------
+// Where the playing currently sits, against the profiles as landmarks.
+//
+// The trail turned out to be the most useful part: a tight cluster means
+// a stable articulation, a long smear means the analyser is chasing
+// something. That is a diagnostic the numbers alone do not give.
+// ---------------------------------------------------------------------
+class DescriptorPad : public juce::Component
+{
+public:
+    void setPosition (float sustain, float sharpness, const float* w)
+    {
+        sus = sustain;
+        sharp = sharpness;
+
+        for (int i = 0; i < ArticulationProfile::numPresets; ++i)
+            weights[i] = w[i];
+
+        trail.push_back ({ sustain, sharpness });
+        if (trail.size() > 26)
+            trail.erase (trail.begin());
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (Palette::well);
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (juce::Colour (0xff23262e));
+        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+
+        const float pad = 26.0f;
+        auto toX = [&r, pad] (float v) { return r.getX() + pad + v * (r.getWidth() - pad * 2.0f); };
+        auto toY = [&r, pad] (float v) { return r.getBottom() - pad - v * (r.getHeight() - pad * 2.0f); };
+
+        g.setColour (juce::Colour (0xff191c23));
+        for (int i = 0; i <= 4; ++i)
+        {
+            const float f = (float) i / 4.0f;
+            g.drawVerticalLine ((int) toX (f), toY (0.0f), toY (1.0f));
+            g.drawHorizontalLine ((int) toY (f), toX (0.0f), toX (1.0f));
+        }
+
+        g.setColour (juce::Colour (0xff4a4f5c));
+        g.setFont (juce::FontOptions (8.5f).withStyle ("Bold"));
+        g.drawText ("DECAYS", juce::Rectangle<int> ((int) r.getX() + 4, (int) r.getBottom() - 13, 60, 11),
+                     juce::Justification::centredLeft);
+        g.drawText ("SUSTAINS", juce::Rectangle<int> ((int) r.getRight() - 64, (int) r.getBottom() - 13, 60, 11),
+                     juce::Justification::centredRight);
+        g.drawText ("SHARP", juce::Rectangle<int> ((int) r.getX() + 4, (int) r.getY() + 3, 60, 11),
+                     juce::Justification::centredLeft);
+
+        const auto names = ArticulationProfile::getPresetNames();
+
+        for (int i = 0; i < ArticulationProfile::numPresets; ++i)
+        {
+            const auto a = ArticulationProfile::positionOf (i);
+            const float x = toX (a.sustain);
+            const float y = toY (a.sharpness);
+
+            g.setColour (Palette::bone.withAlpha (0.18f + weights[i] * 0.72f));
+            g.fillEllipse (x - 4.0f, y - 4.0f, 8.0f, 8.0f);
+
+            g.setColour (weights[i] > 0.25f ? Palette::bone : Palette::dim);
+            g.setFont (juce::FontOptions (9.0f).withStyle ("Bold"));
+            g.drawText (names[i].toUpperCase(),
+                         juce::Rectangle<int> ((int) x + 7, (int) y - 6, 72, 12),
+                         juce::Justification::centredLeft);
+        }
+
+        for (size_t i = 0; i < trail.size(); ++i)
+        {
+            const float a = (float) i / (float) trail.size() * 0.4f;
+            g.setColour (Palette::bright.withAlpha (a));
+            g.fillEllipse (toX (trail[i].x) - 2.5f, toY (trail[i].y) - 2.5f, 5.0f, 5.0f);
+        }
+
+        g.setColour (Palette::bright);
+        g.fillEllipse (toX (sus) - 5.5f, toY (sharp) - 5.5f, 11.0f, 11.0f);
+        g.setColour (Palette::well);
+        g.drawEllipse (toX (sus) - 5.5f, toY (sharp) - 5.5f, 11.0f, 11.0f, 1.5f);
+    }
+
+private:
+    float sus = 0.2f, sharp = 0.85f;
+    float weights[ArticulationProfile::numPresets] {};
+    std::vector<juce::Point<float>> trail;
+};
+
+// Blend weights as labelled bars beside the pad.
+class WeightBars : public juce::Component
+{
+public:
+    void setWeights (const float* w)
+    {
+        for (int i = 0; i < ArticulationProfile::numPresets; ++i)
+            weights[i] = w[i];
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto names = ArticulationProfile::getPresetNames();
+        auto r = getLocalBounds();
+        const int rowH = r.getHeight() / ArticulationProfile::numPresets;
+
+        for (int i = 0; i < ArticulationProfile::numPresets; ++i)
+        {
+            auto row = r.removeFromTop (rowH);
+            drawLabel (g, names[i], row.removeFromLeft (54), Palette::muted, 9.0f);
+
+            auto pct = row.removeFromRight (30);
+            g.setColour (juce::Colour (0xff98a0b0));
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText (juce::String (juce::roundToInt (weights[i] * 100.0f)) + "%", pct,
+                         juce::Justification::centredRight);
+
+            auto bar = row.reduced (4, 0).withSizeKeepingCentre (row.getWidth() - 8, 3).toFloat();
+            g.setColour (Palette::well);
+            g.fillRoundedRectangle (bar, 1.5f);
+            g.setColour (Palette::bone);
+            g.fillRoundedRectangle (bar.withWidth (juce::jmax (1.0f, bar.getWidth() * weights[i])), 1.5f);
+        }
+    }
+
+private:
+    float weights[ArticulationProfile::numPresets] {};
+};
+
+// A parameter-backed on/off switch.
+class ToggleSwitch : public juce::Component
+{
+public:
+    std::function<void (bool)> onToggle;
+
+    void setState (bool newState) { state = newState; repaint(); }
+    bool getState() const { return state; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().withSizeKeepingCentre (38.0f, 21.0f)
+                    .withX (0.0f);
+
+        g.setColour (state ? juce::Colour (0xff2f6b4d) : Palette::well);
+        g.fillRoundedRectangle (r, 10.5f);
+        g.setColour (state ? juce::Colour (0xff3d8a63) : juce::Colour (0xff23262e));
+        g.drawRoundedRectangle (r.reduced (0.5f), 10.5f, 1.0f);
+
+        g.setColour (Palette::bone);
+        g.fillEllipse (r.getX() + (state ? 20.0f : 3.0f), r.getY() + 3.0f, 15.0f, 15.0f);
+
+        drawLabel (g, "Adaptive", getLocalBounds().withTrimmedLeft (48), Palette::muted, 10.0f);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        state = ! state;
+        if (onToggle) onToggle (state);
+        repaint();
+    }
+
+private:
+    bool state = false;
 };
 
 // ---------------------------------------------------------------------

@@ -91,6 +91,9 @@ public:
         auto& s = proc.getParams();
 
         addAndMakeVisible (spectrum);
+        addAndMakeVisible (adaptiveSwitch);
+        addAndMakeVisible (pad);
+        addAndMakeVisible (weightBars);
         addAndMakeVisible (articulation);
         addAndMakeVisible (ampMeter);
         addAndMakeVisible (confMeter);
@@ -133,16 +136,88 @@ public:
             }
         };
 
+        if (auto* a = s.getParameter (SynthEngine::adaptiveParamID))
+            adaptiveSwitch.setState (a->getValue() > 0.5f);
+
+        adaptiveSwitch.onToggle = [this, &s] (bool on)
+        {
+            if (auto* a = s.getParameter (SynthEngine::adaptiveParamID))
+            {
+                a->beginChangeGesture();
+                a->setValueNotifyingHost (on ? 1.0f : 0.0f);
+                a->endChangeGesture();
+            }
+            applyMode (on);
+        };
+
+        adaptRate = std::make_unique<ParamRow> (s, SynthEngine::adaptRateParamID, "Adapt over");
+        addAndMakeVisible (*adaptRate);
+
         stability = std::make_unique<ParamRow> (s, SynthEngine::pitchStabilityParamID, "Stability");
         bendRange = std::make_unique<ParamRow> (s, SynthEngine::bendRangeParamID, "Bend range");
         addAndMakeVisible (*stability);
         addAndMakeVisible (*bendRange);
+
+        applyMode (adaptiveSwitch.getState());
+    }
+
+    // Manual and adaptive occupy the same space: one shows the five-way
+    // selector, the other the descriptor pad. Nothing is stacked, so the
+    // pane stays the same length either way.
+    void applyMode (bool adaptive)
+    {
+        pad.setVisible (adaptive);
+        weightBars.setVisible (adaptive);
+        adaptRate->setVisible (adaptive);
+        articulation.setVisible (! adaptive);
+
+        ampMeter.setLocked (adaptive);
+        confMeter.setLocked (adaptive);
+        onsetMeter.setLocked (adaptive);
+
+        if (! adaptive)
+        {
+            ampMeter.setMarkerOverride (0, -1.0f);
+            ampMeter.setMarkerOverride (1, -1.0f);
+            confMeter.setMarkerOverride (0, -1.0f);
+            onsetMeter.setMarkerOverride (0, -1.0f);
+        }
+
+        resized();
+        repaint();
     }
 
     void refresh()
     {
         const auto f = proc.getFeaturesForDisplay();
         const bool sounding = proc.getActiveNoteForDisplay() >= 0;
+
+        const bool adaptive = proc.isAdaptive();
+        if (adaptive != lastAdaptive)
+        {
+            adaptiveSwitch.setState (adaptive);
+            applyMode (adaptive);
+            lastAdaptive = adaptive;
+        }
+
+        if (adaptive)
+        {
+            const auto& an = proc.getAnalyser();
+            const auto d = an.getDescriptors();
+
+            pad.setPosition (d.sustain, d.sharpness, an.getWeights());
+            weightBars.setWeights (an.getWeights());
+
+            // Show where the thresholds have actually moved to.
+            const auto& live = an.getProfile();
+            ampMeter.setMarkerOverride (0, live.releaseAmplitudeThreshold);
+            ampMeter.setMarkerOverride (1, live.onsetAmplitudeThreshold);
+            confMeter.setMarkerOverride (0, live.minPitchConfidence);
+            onsetMeter.setMarkerOverride (0, live.onsetRetriggerThreshold);
+
+            pad.repaint();
+            weightBars.repaint();
+        }
 
         ampMeter.setValue (f.amplitude);
         confMeter.setValue (f.pitchConfidence);
@@ -182,8 +257,24 @@ public:
         legendArea = r.removeFromTop (18);
         r.removeFromTop (6);
 
-        articulation.setBounds (r.removeFromTop (32));
-        r.removeFromTop (14);
+        adaptiveSwitch.setBounds (r.removeFromTop (24));
+        r.removeFromTop (8);
+
+        if (adaptiveSwitch.getState())
+        {
+            auto padRow = r.removeFromTop (118);
+            weightBars.setBounds (padRow.removeFromRight (132).reduced (4, 6));
+            pad.setBounds (padRow.withTrimmedRight (8));
+            r.removeFromTop (6);
+            adaptRate->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+        }
+        else
+        {
+            articulation.setBounds (r.removeFromTop (32));
+            r.removeFromTop (ParamRow::preferredHeight + 92);
+        }
+
+        r.removeFromTop (12);
 
         ampMeter.setBounds (r.removeFromTop (ThresholdMeter::preferredHeight));
         r.removeFromTop (10);
@@ -199,14 +290,18 @@ public:
         mode.setBounds (r.removeFromTop (32));
     }
 
-    static constexpr int contentHeight = 500;
+    static constexpr int contentHeight = 620;
 
 private:
     ExpressionSynthProcessor& proc;
     SpectrumDisplay spectrum;
     SegmentedControl articulation, mode;
+    ToggleSwitch adaptiveSwitch;
+    DescriptorPad pad;
+    WeightBars weightBars;
     ThresholdMeter ampMeter, confMeter, onsetMeter;
-    std::unique_ptr<ParamRow> stability, bendRange;
+    std::unique_ptr<ParamRow> stability, bendRange, adaptRate;
+    bool lastAdaptive = false;
     juce::Rectangle<int> legendArea, groupArea;
     juce::String pitchText { "--" };
 };
