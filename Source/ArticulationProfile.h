@@ -156,6 +156,107 @@ struct ArticulationProfile
         return p;
     }
 
+    // ---- Position in descriptor space ----
+    // The presets double as anchor points for continuous adaptation.
+    // Axes, each grounded in how the instrument produces sound rather
+    // than in surface heuristics:
+    //   sustain   0 = energy decays after the attack (one injection:
+    //                 pluck, strike), 1 = energy sustains or swells
+    //                 (continuous excitation: bow, breath, voice)
+    //   sharpness 0 = gradual rise, 1 = near-instant attack
+    //   glide     0 = pitch jumps between notes, 1 = pitch travels
+    struct Descriptors
+    {
+        float sustain = 0.5f;
+        float sharpness = 0.5f;
+        float glide = 0.0f;
+    };
+
+    static Descriptors positionOf (int presetIndex)
+    {
+        switch (presetIndex)
+        {
+            case 0:  return { 0.20f, 0.85f, 0.05f };   // Plucked
+            case 1:  return { 0.90f, 0.25f, 0.60f };   // Bowed
+            case 2:  return { 0.85f, 0.50f, 0.15f };   // Wind
+            case 3:  return { 0.80f, 0.40f, 0.85f };   // Vocal
+            case 4:  return { 0.05f, 0.95f, 0.00f };   // Percussive
+            default: return {};
+        }
+    }
+
+    static constexpr int numPresets = 5;
+
+    // Inverse-square-distance weights over the anchors. Squared rather
+    // than linear so a measurement sitting on an anchor resolves almost
+    // entirely to it, while points between anchors still blend smoothly.
+    static void weightsFor (const Descriptors& d, float* weightsOut)
+    {
+        float total = 0.0f;
+
+        for (int i = 0; i < numPresets; ++i)
+        {
+            const auto a = positionOf (i);
+            const float ds = d.sustain - a.sustain;
+            const float dh = d.sharpness - a.sharpness;
+            const float dg = d.glide - a.glide;
+
+            const float distSq = ds * ds + dh * dh + dg * dg;
+            weightsOut[i] = 1.0f / (distSq + 1.0e-3f);
+            total += weightsOut[i];
+        }
+
+        if (total > 0.0f)
+            for (int i = 0; i < numPresets; ++i)
+                weightsOut[i] /= total;
+    }
+
+    // Weighted mix of every anchor. Discrete fields resolve by majority:
+    // pitch mode follows whichever side of the blend dominates, while
+    // bend range varies continuously, so the transition between gliding
+    // and quantised behaviour is gradual rather than a switch.
+    static ArticulationProfile blended (const float* weights)
+    {
+        ArticulationProfile out;
+        out.name = "Adaptive";
+
+        out.onsetAmplitudeThreshold = 0.0f;
+        out.releaseAmplitudeThreshold = 0.0f;
+        out.minPitchConfidence = 0.0f;
+        out.onsetRetriggerThreshold = 0.0f;
+        out.bendRangeSemitones = 0.0f;
+        out.ampAttackMs = 0.0f;
+        out.ampReleaseMs = 0.0f;
+
+        float stableBlocks = 0.0f, debounce = 0.0f, glideWeight = 0.0f;
+
+        for (int i = 0; i < numPresets; ++i)
+        {
+            const auto p = fromPresetIndex (i);
+            const float w = weights[i];
+
+            out.onsetAmplitudeThreshold   += w * p.onsetAmplitudeThreshold;
+            out.releaseAmplitudeThreshold += w * p.releaseAmplitudeThreshold;
+            out.minPitchConfidence        += w * p.minPitchConfidence;
+            out.onsetRetriggerThreshold   += w * p.onsetRetriggerThreshold;
+            out.bendRangeSemitones        += w * p.bendRangeSemitones;
+            out.ampAttackMs               += w * p.ampAttackMs;
+            out.ampReleaseMs              += w * p.ampReleaseMs;
+
+            stableBlocks += w * (float) p.stableBlocksRequiredForRetrigger;
+            debounce     += w * (float) p.retriggerDebounceBlocks;
+
+            if (p.pitchMode == PitchMode::Glide)
+                glideWeight += w;
+        }
+
+        out.stableBlocksRequiredForRetrigger = juce::jmax (1, (int) std::round (stableBlocks));
+        out.retriggerDebounceBlocks = juce::jmax (1, (int) std::round (debounce));
+        out.pitchMode = glideWeight >= 0.5f ? PitchMode::Glide : PitchMode::Quantized;
+
+        return out;
+    }
+
     static juce::StringArray getPresetNames()
     {
         return { "Plucked", "Bowed", "Wind", "Vocal", "Percussive" };

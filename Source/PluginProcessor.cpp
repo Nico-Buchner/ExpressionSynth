@@ -18,7 +18,9 @@ ExpressionSynthProcessor::ExpressionSynthProcessor()
                        SynthEngine::confidenceGateParamID,
                        SynthEngine::pitchStabilityParamID,
                        SynthEngine::glideModeParamID,
-                       SynthEngine::bendRangeParamID })
+                       SynthEngine::bendRangeParamID,
+                       SynthEngine::adaptiveParamID,
+                       SynthEngine::adaptRateParamID })
         apvts.addParameterListener (id, this);
 
     refreshArticulationProfile();
@@ -33,7 +35,9 @@ ExpressionSynthProcessor::~ExpressionSynthProcessor()
                        SynthEngine::confidenceGateParamID,
                        SynthEngine::pitchStabilityParamID,
                        SynthEngine::glideModeParamID,
-                       SynthEngine::bendRangeParamID })
+                       SynthEngine::bendRangeParamID,
+                       SynthEngine::adaptiveParamID,
+                       SynthEngine::adaptRateParamID })
         apvts.removeParameterListener (id, this);
 
     cancelPendingUpdate();
@@ -56,6 +60,21 @@ void ExpressionSynthProcessor::parameterChanged (const juce::String& paramID, fl
 
 void ExpressionSynthProcessor::refreshArticulationProfile()
 {
+    adaptiveActive.store (apvts.getRawParameterValue (SynthEngine::adaptiveParamID)->load() > 0.5f);
+    articulationAnalyser.setConvergenceNotes (
+        apvts.getRawParameterValue (SynthEngine::adaptRateParamID)->load());
+
+    // In adaptive mode the analyser owns the profile outright; the manual
+    // parameters stay where the user left them so switching back is
+    // lossless, and so the two can be compared on the same material.
+    if (adaptiveActive.load())
+    {
+        const auto adapted = articulationAnalyser.getProfile();
+        pitchToMidi.setProfile (adapted);
+        featureExtractor.setEnvelopeTimes (adapted.ampAttackMs, adapted.ampReleaseMs);
+        return;
+    }
+
     const int presetIndex = (int) apvts.getRawParameterValue (SynthEngine::articulationPresetParamID)->load();
 
     // Start from the preset (which carries envelope times and debounce
@@ -138,6 +157,7 @@ void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerB
     featureExtractor.prepare (sampleRate, samplesPerBlock);
     expressionMapper.prepare (sampleRate);
     pitchToMidi.prepare (sampleRate);
+    articulationAnalyser.prepare (sampleRate, samplesPerBlock);
     synthEngine.prepare (sampleRate, samplesPerBlock);
     analysisBuffer.setSize (1, samplesPerBlock);
 
@@ -169,6 +189,20 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // 3. Convert pitch/amplitude into note-on/off events for this block.
     generatedMidi.clear();
     pitchToMidi.process (features, generatedMidi, buffer.getNumSamples());
+
+    // 3b. Watch how the source is being played. In adaptive mode this
+    //     feeds straight back into the detection thresholds, so a player
+    //     changing articulation mid-phrase is followed rather than
+    //     requiring a patch change. The loop is closed deliberately;
+    //     the analyser rate-limits itself to keep it from hunting.
+    articulationAnalyser.process (features, pitchToMidi.getCurrentNote());
+
+    if (adaptiveActive.load())
+    {
+        const auto& adapted = articulationAnalyser.getProfile();
+        pitchToMidi.setProfile (adapted);
+        featureExtractor.setEnvelopeTimes (adapted.ampAttackMs, adapted.ampReleaseMs);
+    }
 
     // 4. Push timbre/amplitude features into the modulation state.
     expressionMapper.apply (features, modulation, buffer.getNumSamples());

@@ -233,6 +233,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
         juce::ParameterID { ampLevelParamID, 1 }, "Output Level",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f));
 
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { adaptiveParamID, 1 }, "Adaptive", false));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { adaptRateParamID, 1 }, "Adapt Over (notes)",
+        juce::NormalisableRange<float> (1.0f, 32.0f, 1.0f), 4.0f));
+
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { articulationPresetParamID, 1 }, "Articulation",
         ArticulationProfile::getPresetNames(), 0));

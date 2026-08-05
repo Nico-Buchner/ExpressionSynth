@@ -102,6 +102,8 @@ public:
     static constexpr auto pitchStabilityParamID     = "artPitchStability";
     static constexpr auto glideModeParamID          = "artGlideMode";
     static constexpr auto bendRangeParamID          = "artBendRange";
+    static constexpr auto adaptiveParamID           = "artAdaptive";
+    static constexpr auto adaptRateParamID          = "artAdaptRate";
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

@@ -3,6 +3,7 @@
 #include "FeatureExtractor.h"
 #include "ExpressionMapper.h"
 #include "ModulationState.h"
+#include "ArticulationAnalyser.h"
 #include "PitchToMidiConverter.h"
 #include "SynthEngine.h"
 
@@ -60,6 +61,8 @@ public:
     juce::String getActiveProfileName() const { return pitchToMidi.getProfile().name; }
     const SpectrumData& getSpectrum() const { return featureExtractor.getSpectrum(); }
     const ExpressionMapper& getMapper() const { return expressionMapper; }
+    const ArticulationAnalyser& getAnalyser() const { return articulationAnalyser; }
+    bool isAdaptive() const { return adaptiveActive.load(); }
 
 private:
     void parameterChanged (const juce::String& paramID, float newValue) override;
@@ -70,7 +73,9 @@ private:
 
     FeatureExtractor featureExtractor;
     ExpressionMapper expressionMapper;
+    ArticulationAnalyser articulationAnalyser;
     PitchToMidiConverter pitchToMidi;
+    std::atomic<bool> adaptiveActive { false };
     SynthEngine synthEngine;
 
     juce::AudioBuffer<float> analysisBuffer;
