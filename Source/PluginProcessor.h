@@ -65,6 +65,7 @@ public:
     bool isAdaptive() const { return adaptiveActive.load(); }
     float getAnalysisLatencyMs() const { return featureExtractor.getAnalysisLatencyMs(); }
     bool isSyncMode() const { return synthEngine.isSyncMode(); }
+    float getSyncMix() const { return synthEngine.getSyncMix(); }
     float getSyncFrequency() const { return synthEngine.getSyncFrequency(); }
     bool isSyncLocked() const { return synthEngine.isSyncLocked(); }
 

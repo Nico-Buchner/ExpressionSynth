@@ -151,7 +151,7 @@ public:
     static constexpr auto bendRangeParamID          = "artBendRange";
     static constexpr auto adaptiveParamID           = "artAdaptive";
     static constexpr auto adaptRateParamID          = "artAdaptRate";
-    static constexpr auto syncModeParamID           = "engSyncMode";
+    static constexpr auto syncMixParamID            = "engSyncMix";
     static constexpr auto syncRatioParamID          = "engSyncRatio";
     static constexpr auto syncSensParamID           = "engSyncSens";
     static constexpr auto syncReleaseParamID        = "engSyncRelease";
@@ -166,7 +166,8 @@ public:
                            const ModulationState& modulation,
                            const float* monoInput);
 
-    bool isSyncMode() const noexcept { return syncMode; }
+    float getSyncMix() const noexcept { return currentSyncMix; }
+    bool isSyncMode() const noexcept { return currentSyncMix > 0.5f; }
     float getSyncFrequency() const noexcept { return syncVoice.getTrackedFrequency(); }
     bool isSyncLocked() const noexcept { return syncVoice.isLocked(); }
 
@@ -176,6 +177,12 @@ private:
 
     juce::Synthesiser synth;
     SyncVoice syncVoice;
-    bool syncMode = false;
+
+    // Only allocated when a genuine blend is in use; the endpoints render
+    // one path and cost nothing extra.
+    juce::AudioBuffer<float> syncScratch;
+
+    float currentSyncMix = 0.0f;
+    bool lastWasBlending = false;
     double currentSampleRate = 44100.0;
 };

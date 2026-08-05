@@ -23,7 +23,7 @@ ExpressionSynthProcessor::ExpressionSynthProcessor()
                        SynthEngine::adaptRateParamID,
                        SynthEngine::pitchMinParamID,
                        SynthEngine::pitchMaxParamID,
-                       SynthEngine::syncModeParamID })
+                       SynthEngine::syncMixParamID })
         apvts.addParameterListener (id, this);
 
     refreshArticulationProfile();
@@ -43,7 +43,7 @@ ExpressionSynthProcessor::~ExpressionSynthProcessor()
                        SynthEngine::adaptRateParamID,
                        SynthEngine::pitchMinParamID,
                        SynthEngine::pitchMaxParamID,
-                       SynthEngine::syncModeParamID })
+                       SynthEngine::syncMixParamID })
         apvts.removeParameterListener (id, this);
 
     cancelPendingUpdate();

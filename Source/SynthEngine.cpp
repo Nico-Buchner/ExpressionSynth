@@ -322,6 +322,7 @@ void SynthEngine::prepare (double sampleRate, int samplesPerBlock, int numVoices
             voice->prepare (spec);
 
     syncVoice.prepare (spec);
+    syncScratch.setSize (2, juce::jmax (1, samplesPerBlock));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameterLayout()
@@ -383,8 +384,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     // Narrowing this is the single largest latency reduction available:
     // the analysis window is two periods of the lowest detectable note,
     // so raising the floor shortens it proportionally.
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { syncModeParamID, 1 }, "Hard Sync", false));
+    // A mix rather than a switch. At 0 the synth is entirely
+    // note-driven; at 1 entirely hard-synced. Between the two, the sync
+    // layer responds within a cycle and covers the interval during which
+    // pitch detection is still deciding, so an attack is heard
+    // immediately and the note layer arrives underneath it.
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { syncMixParamID, 1 }, "Sync Mix",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncRatioParamID, 1 }, "Sync Ratio",
@@ -495,23 +502,33 @@ void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
                                     const float* monoInput)
 {
     const auto vp = gatherParams (params, modulation);
-    const bool wantSync = params.getRawParameterValue (syncModeParamID)->load() > 0.5f;
+    const int numSamples = buffer.getNumSamples();
 
-    if (wantSync != syncMode)
-    {
-        syncMode = wantSync;
+    currentSyncMix = juce::jlimit (0.0f, 1.0f,
+                                    params.getRawParameterValue (syncMixParamID)->load());
+
+    const bool useSync = currentSyncMix > 0.001f;
+    const bool useNotes = currentSyncMix < 0.999f;
+    const bool blending = useSync && useNotes;
+
+    // Coming out of a blend, the sync oscillators have been free-running
+    // against a signal nobody was listening to. Restart them rather than
+    // fading in mid-cycle.
+    if (blending != lastWasBlending && ! blending && ! useSync)
         syncVoice.reset();
-        synth.allNotesOff (0, false);
-    }
+    lastWasBlending = blending;
 
-    if (syncMode)
+    if (useSync)
     {
         syncVoice.setParams (vp,
                               params.getRawParameterValue (syncRatioParamID)->load(),
                               params.getRawParameterValue (syncReleaseParamID)->load(),
                               params.getRawParameterValue (syncSensParamID)->load());
+    }
 
-        syncVoice.render (buffer, monoInput, buffer.getNumSamples());
+    if (! useNotes)
+    {
+        syncVoice.render (buffer, monoInput, numSamples);
         return;
     }
 
@@ -519,5 +536,29 @@ void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
         if (auto* voice = dynamic_cast<SynthVoice*> (synth.getVoice (i)))
             voice->updateFromParams (vp);
 
-    synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
+    if (! useSync)
+    {
+        synth.renderNextBlock (buffer, midi, 0, numSamples);
+        return;
+    }
+
+    // Both layers wanted. Sync renders to scratch, notes to the output,
+    // then equal-power crossfade so the perceived level holds steady
+    // across the sweep rather than dipping in the middle.
+    syncScratch.setSize (juce::jmax (2, buffer.getNumChannels()), numSamples, false, false, true);
+    syncScratch.clear();
+    syncVoice.render (syncScratch, monoInput, numSamples);
+
+    synth.renderNextBlock (buffer, midi, 0, numSamples);
+
+    const float syncGain = std::sqrt (currentSyncMix);
+    const float noteGain = std::sqrt (1.0f - currentSyncMix);
+
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        buffer.applyGain (ch, 0, numSamples, noteGain);
+        buffer.addFrom (ch, 0, syncScratch,
+                         juce::jmin (ch, syncScratch.getNumChannels() - 1),
+                         0, numSamples, syncGain);
+    }
 }

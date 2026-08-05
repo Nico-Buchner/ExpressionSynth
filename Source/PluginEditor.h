@@ -324,6 +324,11 @@ public:
             rows.push_back (std::move (row));
         };
 
+        add (SynthEngine::syncMixParamID,       "Sync mix");
+        add (SynthEngine::syncRatioParamID,     "Ratio");
+        add (SynthEngine::syncSensParamID,      "Sensitivity");
+        add (SynthEngine::syncReleaseParamID,   "Release");
+
         add (SynthEngine::morphParamID,         "Waveshape");
         add (SynthEngine::morphModDepthParamID, "Mod depth");
         add (SynthEngine::unisonParamID,        "Voices");
@@ -342,6 +347,27 @@ public:
     void refresh()
     {
         auto& s = proc.getParams();
+
+        // Say plainly what the current mix means, since the two layers
+        // behave so differently that a bare number is not enough.
+        const float mix = proc.getSyncMix();
+        juce::String hint;
+
+        if (mix < 0.001f)
+            hint = "Note mode. Pitch is detected and quantised; adaptive articulation applies.";
+        else if (mix > 0.999f)
+            hint = "Hard sync only. Responds within one cycle, but there are no notes - "
+                   "articulation, glide and the envelope do nothing.";
+        else
+            hint = "Blended. Sync responds immediately and covers the detection delay; "
+                   "the note layer arrives beneath it.";
+
+        if (hint != syncHint)
+        {
+            syncHint = hint;
+            repaint (syncNote);
+        }
+
         const float base = s.getRawParameterValue (SynthEngine::morphParamID)->load();
         const float depth = s.getRawParameterValue (SynthEngine::morphModDepthParamID)->load();
         const float live = juce::jlimit (0.0f, 1.0f,
@@ -354,6 +380,10 @@ public:
     {
         for (size_t i = 0; i < headers.size(); ++i)
             drawGroupHeader (g, headers[i].first, headers[i].second);
+
+        g.setColour (Palette::dim);
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawFittedText (syncHint, syncNote, juce::Justification::topLeft, 2);
     }
 
     void resized() override
@@ -361,25 +391,29 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
+        drawLabelSlot (r, "Sync");
+        place (r, 0, 4);
+        syncNote = r.removeFromTop (30);
+
         drawLabelSlot (r, "Oscillator");
         scope.setBounds (r.removeFromTop (78));
         r.removeFromTop (8);
-        place (r, 0, 2);
+        place (r, 4, 6);
 
         drawLabelSlot (r, "Unison");
-        place (r, 2, 5);
+        place (r, 6, 9);
 
         drawLabelSlot (r, "Filter");
-        place (r, 5, 8);
+        place (r, 9, 12);
 
         drawLabelSlot (r, "Envelope");
-        place (r, 8, 12);
+        place (r, 12, 16);
 
         drawLabelSlot (r, "Output");
-        place (r, 12, 13);
+        place (r, 16, 17);
     }
 
-    static constexpr int contentHeight = 720;
+    static constexpr int contentHeight = 890;
 
 private:
     void drawLabelSlot (juce::Rectangle<int>& r, const juce::String& name)
@@ -398,6 +432,8 @@ private:
     WaveScope scope;
     std::vector<std::unique_ptr<ParamRow>> rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
+    juce::Rectangle<int> syncNote;
+    juce::String syncHint;
 };
 
 // ---------------------------------------------------------------------
