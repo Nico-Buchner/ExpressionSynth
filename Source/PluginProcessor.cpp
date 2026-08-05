@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "NoteOrigin.h"
 
 ExpressionSynthProcessor::ExpressionSynthProcessor()
     : AudioProcessor (BusesProperties()
@@ -182,7 +183,6 @@ void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerB
 
 void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
-    juce::ignoreUnused (midi); // note-triggering source is audio-derived, not host MIDI
 
     // 1. Sum input to mono for analysis (don't touch `buffer` yet - we
     //    need it clean for the synth to render into afterward).
@@ -196,9 +196,27 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     featureExtractor.process (analysisBuffer);
     const auto& features = featureExtractor.getLatestFeatures();
 
-    // 3. Convert pitch/amplitude into note-on/off events for this block.
+    // 3. Convert pitch/amplitude into note-on/off events, then merge any
+    //    notes the player is holding on a keyboard. Both end up in the
+    //    same voice pool; they are told apart by channel, so the
+    //    modulations that belong to a detected note are not applied to a
+    //    note somebody fingered.
     generatedMidi.clear();
-    pitchToMidi.process (features, generatedMidi, buffer.getNumSamples());
+
+    if (apvts.getRawParameterValue (SynthEngine::audioNotesParamID)->load() > 0.5f)
+    {
+        pitchToMidi.process (features, generatedMidi, buffer.getNumSamples());
+    }
+    else if (pitchToMidi.getCurrentNote() >= 0)
+    {
+        // Audio triggering was switched off mid-note; release it rather
+        // than leaving it sounding forever.
+        pitchToMidi.reset();
+        generatedMidi.addEvent (juce::MidiMessage::allNotesOff (NoteOrigin::audioChannel), 0);
+    }
+
+    if (apvts.getRawParameterValue (SynthEngine::midiNotesParamID)->load() > 0.5f)
+        generatedMidi.addEvents (midi, 0, buffer.getNumSamples(), 0);
 
     // 3b. Watch how the source is being played. In adaptive mode this
     //     feeds straight back into the detection thresholds, so a player

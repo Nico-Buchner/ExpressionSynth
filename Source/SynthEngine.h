@@ -5,27 +5,42 @@
 #include "ModulationState.h"
 #include "MorphOscillator.h"
 #include "SyncDetector.h"
+#include "NoteOrigin.h"
 
-class SynthSound : public juce::SynthesiserSound
+class AudioOriginSound : public juce::SynthesiserSound
 {
 public:
     bool appliesToNote (int) override { return true; }
-    bool appliesToChannel (int) override { return true; }
+    bool appliesToChannel (int ch) override { return ch == NoteOrigin::audioChannel; }
+};
+
+class MidiOriginSound : public juce::SynthesiserSound
+{
+public:
+    bool appliesToNote (int) override { return true; }
+    bool appliesToChannel (int ch) override { return ch != NoteOrigin::audioChannel; }
 };
 
 // Everything a voice needs for one block, gathered once rather than
 // passed as a long argument list.
 struct VoiceParams
 {
+    // --- describe the input's character: applied to every voice ---
     float cutoffHz = 800.0f;
     float resonance = 0.7f;
-    float pitchBendSemitones = 0.0f;
     float morph = 0.0f;
     int unisonCount = 1;
     float detuneCents = 0.0f;
     float spread = 0.0f;
-    float gain = 0.8f;
     juce::ADSR::Parameters adsr { 0.01f, 0.15f, 0.8f, 0.3f };
+
+    // --- describe the DETECTED note: audio-triggered voices only ---
+    // A MIDI chord should sound at its own velocity rather than being
+    // gated by the guitar's envelope, and should not inherit the bend
+    // belonging to a note the player did not play.
+    float audioGain = 0.8f;
+    float midiGain = 0.8f;
+    float pitchBendSemitones = 0.0f;
 };
 
 class SynthVoice : public juce::SynthesiserVoice
@@ -33,7 +48,8 @@ class SynthVoice : public juce::SynthesiserVoice
 public:
     bool canPlaySound (juce::SynthesiserSound* sound) override
     {
-        return dynamic_cast<SynthSound*> (sound) != nullptr;
+        return dynamic_cast<AudioOriginSound*> (sound) != nullptr
+            || dynamic_cast<MidiOriginSound*> (sound) != nullptr;
     }
 
     void prepare (const juce::dsp::ProcessSpec& spec);
@@ -63,6 +79,7 @@ private:
 
     double baseFrequency = 440.0;
     float currentVelocity = 0.0f;
+    bool audioTriggered = true;
 
     int activeUnison = 1;
     float unisonScale = 1.0f;
@@ -123,7 +140,7 @@ private:
 class SynthEngine
 {
 public:
-    void prepare (double sampleRate, int samplesPerBlock, int numVoices = 8);
+    void prepare (double sampleRate, int samplesPerBlock, int numVoices = 16);
 
     static constexpr auto cutoffParamID    = "synthCutoff";
     static constexpr auto resonanceParamID = "synthResonance";
@@ -152,6 +169,8 @@ public:
     static constexpr auto adaptiveParamID           = "artAdaptive";
     static constexpr auto adaptRateParamID          = "artAdaptRate";
     static constexpr auto syncMixParamID            = "engSyncMix";
+    static constexpr auto audioNotesParamID         = "engAudioNotes";
+    static constexpr auto midiNotesParamID          = "engMidiNotes";
     static constexpr auto syncRatioParamID          = "engSyncRatio";
     static constexpr auto syncSensParamID           = "engSyncSens";
     static constexpr auto syncReleaseParamID        = "engSyncRelease";

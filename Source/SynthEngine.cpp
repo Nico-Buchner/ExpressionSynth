@@ -45,8 +45,13 @@ void SynthVoice::refreshUnison (int count, float detuneCents, float spread)
     cachedSpread = spread;
 }
 
-void SynthVoice::startNote (int midiNoteNumber, float velocity, juce::SynthesiserSound*, int)
+void SynthVoice::startNote (int midiNoteNumber, float velocity,
+                             juce::SynthesiserSound* sound, int)
 {
+    // Which sound matched tells us the channel the note arrived on, and
+    // so whether the player produced it with an instrument or a keyboard.
+    audioTriggered = dynamic_cast<AudioOriginSound*> (sound) != nullptr;
+
     baseFrequency = juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber);
     currentVelocity = velocity;
 
@@ -87,7 +92,11 @@ void SynthVoice::updateFromParams (const VoiceParams& p)
         refreshUnison (p.unisonCount, p.detuneCents, p.spread);
     }
 
-    const float bent = (float) baseFrequency * std::pow (2.0f, p.pitchBendSemitones / 12.0f);
+    // Bend is the detected pitch's deviation from the note it was
+    // quantised to. A keyboard note has no such relationship, so it plays
+    // where it was asked to.
+    const float bendSemis = audioTriggered ? p.pitchBendSemitones : 0.0f;
+    const float bent = (float) baseFrequency * std::pow (2.0f, bendSemis / 12.0f);
 
     for (int u = 0; u < activeUnison; ++u)
     {
@@ -99,7 +108,12 @@ void SynthVoice::updateFromParams (const VoiceParams& p)
     filter.setResonance (juce::jlimit (0.1f, 10.0f, p.resonance));
 
     envelope.setParameters (p.adsr);
-    outputGain.setTargetValue (juce::jlimit (0.0f, 1.0f, p.gain));
+
+    // Audio-triggered voices follow the input's envelope, because that
+    // envelope IS the note. MIDI voices would be silenced by it whenever
+    // the instrument was quiet, so they use the plain level instead.
+    outputGain.setTargetValue (juce::jlimit (0.0f, 1.0f,
+                                              audioTriggered ? p.audioGain : p.midiGain));
 }
 
 void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples)
@@ -308,7 +322,8 @@ void SynthEngine::prepare (double sampleRate, int samplesPerBlock, int numVoices
     // Without a registered sound, Synthesiser::noteOn matches nothing
     // and the synth is silent while compiling perfectly well.
     synth.clearSounds();
-    synth.addSound (new SynthSound());
+    synth.addSound (new AudioOriginSound());
+    synth.addSound (new MidiOriginSound());
 
     synth.setCurrentPlaybackSampleRate (sampleRate);
 
@@ -392,6 +407,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncMixParamID, 1 }, "Sync Mix",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { audioNotesParamID, 1 }, "Audio Notes", true));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { midiNotesParamID, 1 }, "MIDI Notes", true));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncRatioParamID, 1 }, "Sync Ratio",
@@ -484,8 +505,9 @@ VoiceParams SynthEngine::gatherParams (juce::AudioProcessorValueTreeState& param
     vp.detuneCents = params.getRawParameterValue (detuneParamID)->load();
     vp.spread      = params.getRawParameterValue (spreadParamID)->load();
 
-    vp.gain = params.getRawParameterValue (ampLevelParamID)->load()
-                * modulation.amplitude.load();
+    const float level = params.getRawParameterValue (ampLevelParamID)->load();
+    vp.audioGain = level * modulation.amplitude.load();
+    vp.midiGain = level;
 
     vp.adsr.attack  = params.getRawParameterValue (attackParamID)->load()  * 0.001f;
     vp.adsr.decay   = params.getRawParameterValue (decayParamID)->load()   * 0.001f;

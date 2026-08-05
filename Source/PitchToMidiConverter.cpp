@@ -1,4 +1,5 @@
 #include "PitchToMidiConverter.h"
+#include "NoteOrigin.h"
 
 void PitchToMidiConverter::prepare (double newSampleRate)
 {
@@ -35,10 +36,10 @@ void PitchToMidiConverter::triggerNote (int note, float amplitude,
                                          juce::MidiBuffer& midiOut, bool releaseFirst)
 {
     if (releaseFirst && currentNote >= 0)
-        midiOut.addEvent (juce::MidiMessage::noteOff (1, currentNote), 0);
+        midiOut.addEvent (juce::MidiMessage::noteOff (NoteOrigin::audioChannel, currentNote), 0);
 
     const int velocity = amplitudeToVelocity (amplitude);
-    midiOut.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) velocity),
+    midiOut.addEvent (juce::MidiMessage::noteOn (NoteOrigin::audioChannel, note, (juce::uint8) velocity),
                        releaseFirst ? 1 : 0);
 
     currentNote = note;
@@ -67,7 +68,7 @@ void PitchToMidiConverter::process (const FeatureExtractor::Features& features,
     // --- A note is currently on: watch for release or retrigger ---
     if (! pitchIsUsable || features.amplitude < profile.releaseAmplitudeThreshold)
     {
-        midiOut.addEvent (juce::MidiMessage::noteOff (1, currentNote), samplePos);
+        midiOut.addEvent (juce::MidiMessage::noteOff (NoteOrigin::audioChannel, currentNote), samplePos);
         noteIsOn = false;
         currentNote = -1;
         candidateNote = -1;

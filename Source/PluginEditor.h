@@ -324,6 +324,9 @@ public:
             rows.push_back (std::move (row));
         };
 
+        add (SynthEngine::audioNotesParamID,    "Audio notes");
+        add (SynthEngine::midiNotesParamID,     "MIDI notes");
+
         add (SynthEngine::syncMixParamID,       "Sync mix");
         add (SynthEngine::syncRatioParamID,     "Ratio");
         add (SynthEngine::syncSensParamID,      "Sensitivity");
@@ -350,6 +353,26 @@ public:
 
         // Say plainly what the current mix means, since the two layers
         // behave so differently that a bare number is not enough.
+        const bool audioNotes = s.getRawParameterValue (SynthEngine::audioNotesParamID)->load() > 0.5f;
+        const bool midiNotes  = s.getRawParameterValue (SynthEngine::midiNotesParamID)->load() > 0.5f;
+
+        juce::String sHint;
+        if (audioNotes && midiNotes)
+            sHint = "Both. Detected notes carry the input's envelope and bend; keyboard notes "
+                    "play at their own velocity. Timbre follows the input either way.";
+        else if (audioNotes)
+            sHint = "The instrument plays the synth.";
+        else if (midiNotes)
+            sHint = "Keyboard plays the notes; the instrument shapes their timbre.";
+        else
+            sHint = "No note source enabled - nothing will sound.";
+
+        if (sHint != sourceHint)
+        {
+            sourceHint = sHint;
+            repaint (sourceNote);
+        }
+
         const float mix = proc.getSyncMix();
         juce::String hint;
 
@@ -383,6 +406,7 @@ public:
 
         g.setColour (Palette::dim);
         g.setFont (juce::FontOptions (10.0f));
+        g.drawFittedText (sourceHint, sourceNote, juce::Justification::topLeft, 2);
         g.drawFittedText (syncHint, syncNote, juce::Justification::topLeft, 2);
     }
 
@@ -391,29 +415,33 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
+        drawLabelSlot (r, "Note sources");
+        place (r, 0, 2);
+        sourceNote = r.removeFromTop (30);
+
         drawLabelSlot (r, "Sync");
-        place (r, 0, 4);
+        place (r, 2, 6);
         syncNote = r.removeFromTop (30);
 
         drawLabelSlot (r, "Oscillator");
         scope.setBounds (r.removeFromTop (78));
         r.removeFromTop (8);
-        place (r, 4, 6);
+        place (r, 6, 8);
 
         drawLabelSlot (r, "Unison");
-        place (r, 6, 9);
+        place (r, 8, 11);
 
         drawLabelSlot (r, "Filter");
-        place (r, 9, 12);
+        place (r, 11, 14);
 
         drawLabelSlot (r, "Envelope");
-        place (r, 12, 16);
+        place (r, 14, 18);
 
         drawLabelSlot (r, "Output");
-        place (r, 16, 17);
+        place (r, 18, 19);
     }
 
-    static constexpr int contentHeight = 890;
+    static constexpr int contentHeight = 980;
 
 private:
     void drawLabelSlot (juce::Rectangle<int>& r, const juce::String& name)
@@ -432,8 +460,8 @@ private:
     WaveScope scope;
     std::vector<std::unique_ptr<ParamRow>> rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
-    juce::Rectangle<int> syncNote;
-    juce::String syncHint;
+    juce::Rectangle<int> syncNote, sourceNote;
+    juce::String syncHint, sourceHint;
 };
 
 // ---------------------------------------------------------------------
