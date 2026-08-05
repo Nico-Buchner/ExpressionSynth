@@ -53,8 +53,8 @@ void ExpressionMapper::apply (const FeatureExtractor::Features& features,
                                int numSamples,
                                juce::AudioProcessorValueTreeState& params)
 {
-    float sums[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-    bool written[5] = { false, false, false, false, false };
+    float sums[9] = {};
+    bool written[9] = {};
 
     for (int slot = 0; slot < numSlots; ++slot)
     {
@@ -76,7 +76,7 @@ void ExpressionMapper::apply (const FeatureExtractor::Features& features,
         if (source == Source::Off)
             continue;
 
-        const int dest = juce::jlimit (0, 4,
+        const int dest = juce::jlimit (0, 8,
             (int) params.getRawParameterValue (destinationParamID (slot))->load());
 
         // Several slots may target one destination; they add.
@@ -92,6 +92,11 @@ void ExpressionMapper::apply (const FeatureExtractor::Features& features,
     modulation.amplitude.store (written[2] ? juce::jlimit (0.0f, 1.0f, sums[2]) : 1.0f);
 
     modulation.oscMorph.store (juce::jlimit (0.0f, 1.0f, sums[4]));
+
+    modulation.driveAmount.store   (juce::jlimit (0.0f, 1.0f, sums[5]));
+    modulation.delayMix.store      (juce::jlimit (0.0f, 1.0f, sums[6]));
+    modulation.delayFeedback.store (juce::jlimit (0.0f, 1.0f, sums[7]));
+    modulation.reverbMix.store     (juce::jlimit (0.0f, 1.0f, sums[8]));
 
     // Pitch bend is written by PluginProcessor from the detected note's
     // cents deviation. A slot targeting it adds to that rather than

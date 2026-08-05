@@ -36,6 +36,13 @@ struct ModulationState
     // subtractively shaping a fixed waveform.
     std::atomic<float> oscMorph        { 0.0f };
 
+    // Effects destinations. Playing harder adding grit is the same idea
+    // as playing brighter opening the filter.
+    std::atomic<float> driveAmount     { 0.0f };
+    std::atomic<float> delayMix        { 0.0f };
+    std::atomic<float> delayFeedback   { 0.0f };
+    std::atomic<float> reverbMix       { 0.0f };
+
     // Absolute, in semitones - carries cents-deviation pitch expression
     // (vibrato/bend) on top of the note PitchToMidiConverter selected.
     std::atomic<float> pitchBendSemitones { 0.0f };
@@ -46,6 +53,10 @@ struct ModulationState
         filterResonance.store (0.0f);
         amplitude.store (1.0f);
         oscMorph.store (0.0f);
+        driveAmount.store (0.0f);
+        delayMix.store (0.0f);
+        delayFeedback.store (0.0f);
+        reverbMix.store (0.0f);
         pitchBendSemitones.store (0.0f);
     }
 };

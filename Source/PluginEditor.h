@@ -3,6 +3,7 @@
 #include "UIComponents.h"
 #include "ExpressionMapper.h"
 #include "Arpeggiator.h"
+#include "EffectsChain.h"
 
 // Thin track, small round grip. Deliberately quiet so the meters and the
 // spectrum stay the loudest thing on screen.
@@ -569,6 +570,87 @@ private:
 };
 
 // ---------------------------------------------------------------------
+// FX: drive, delay, reverb.
+// ---------------------------------------------------------------------
+class FxPane : public juce::Component
+{
+public:
+    FxPane (ExpressionSynthProcessor& p) : proc (p)
+    {
+        auto& s = proc.getParams();
+
+        auto add = [this, &s] (juce::String id, juce::String label)
+        {
+            auto row = std::make_unique<ParamRow> (s, id, label);
+            addAndMakeVisible (*row);
+            rows.push_back (std::move (row));
+        };
+
+        add (EffectsChain::driveParamID,      "Drive");
+        add (EffectsChain::driveToneParamID,  "Tone");
+        add (EffectsChain::driveLevelParamID, "Level");
+        add (EffectsChain::driveMixParamID,   "Mix");
+
+        add (EffectsChain::delayTimeParamID,     "Time");
+        add (EffectsChain::delaySyncParamID,     "Sync");
+        add (EffectsChain::delayDivisionParamID, "Division");
+        add (EffectsChain::delayFeedbackParamID, "Feedback");
+        add (EffectsChain::delayDampParamID,     "Damping");
+        add (EffectsChain::delayMixParamID,      "Mix");
+
+        add (EffectsChain::reverbSizeParamID, "Size");
+        add (EffectsChain::reverbDampParamID, "Damping");
+        add (EffectsChain::reverbMixParamID,  "Mix");
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (size_t i = 0; i < headers.size(); ++i)
+            drawGroupHeader (g, headers[i].first, headers[i].second);
+
+        g.setColour (Palette::dim);
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawFittedText ("Drive, delay mix, delay feedback and reverb mix are all "
+                           "matrix destinations, so the input's expression can reach them. "
+                           "Level is separate from Drive because saturation raises the "
+                           "signal as it compresses it.",
+                           footer, juce::Justification::topLeft, 4);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        headers.clear();
+
+        auto place = [&r, this] (size_t from, size_t to)
+        {
+            for (size_t i = from; i < to && i < rows.size(); ++i)
+                rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+            r.removeFromTop (8);
+        };
+
+        headers.push_back ({ "Drive", r.removeFromTop (30) });
+        place (0, 4);
+
+        headers.push_back ({ "Delay", r.removeFromTop (30) });
+        place (4, 10);
+
+        headers.push_back ({ "Reverb", r.removeFromTop (30) });
+        place (10, 13);
+
+        footer = r.removeFromTop (58);
+    }
+
+    static constexpr int contentHeight = 620;
+
+private:
+    ExpressionSynthProcessor& proc;
+    std::vector<std::unique_ptr<ParamRow>> rows;
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
+    juce::Rectangle<int> footer;
+};
+
+// ---------------------------------------------------------------------
 // MATRIX: what drives what, and now editable.
 //
 // Six slots, each four parameters. Routes were made data rather than code
@@ -652,13 +734,13 @@ class ExpressionSynthEditor : public juce::AudioProcessorEditor,
 public:
     explicit ExpressionSynthEditor (ExpressionSynthProcessor& p)
         : AudioProcessorEditor (&p), proc (p),
-          detect (p), synth (p), arp (p), matrix (p)
+          detect (p), synth (p), arp (p), fx (p), matrix (p)
     {
         addAndMakeVisible (tabs);
-        tabs.setOptions ({ "Detect", "Synth", "Arp", "Matrix" });
+        tabs.setOptions ({ "Detect", "Synth", "Arp", "FX", "Matrix" });
         tabs.onSelect = [this] (int i) { showPane (i); };
 
-        for (auto* v : { &detectView, &synthView, &arpView, &matrixView })
+        for (auto* v : { &detectView, &synthView, &arpView, &fxView, &matrixView })
         {
             addChildComponent (*v);
             v->setScrollBarsShown (true, false);
@@ -667,6 +749,7 @@ public:
         detectView.setViewedComponent (&detect, false);
         synthView.setViewedComponent (&synth, false);
         arpView.setViewedComponent (&arp, false);
+        fxView.setViewedComponent (&fx, false);
         matrixView.setViewedComponent (&matrix, false);
 
         showPane (0);
@@ -717,12 +800,13 @@ public:
 
         tabs.setBounds (r.removeFromTop (36).reduced (12, 3));
 
-        for (auto* v : { &detectView, &synthView, &arpView, &matrixView })
+        for (auto* v : { &detectView, &synthView, &arpView, &fxView, &matrixView })
             v->setBounds (r);
 
         detect.setSize (r.getWidth() - 10, DetectPane::contentHeight);
         synth.setSize  (r.getWidth() - 10, SynthPane::contentHeight);
         arp.setSize    (r.getWidth() - 10, ArpPane::contentHeight);
+        fx.setSize     (r.getWidth() - 10, FxPane::contentHeight);
         matrix.setSize (r.getWidth() - 10, MatrixPane::contentHeight);
     }
 
@@ -734,7 +818,8 @@ private:
         detectView.setVisible (index == 0);
         synthView.setVisible (index == 1);
         arpView.setVisible (index == 2);
-        matrixView.setVisible (index == 3);
+        fxView.setVisible (index == 3);
+        matrixView.setVisible (index == 4);
         current = index;
     }
 
@@ -772,9 +857,10 @@ private:
     DetectPane detect;
     SynthPane synth;
     ArpPane arp;
+    FxPane fx;
     MatrixPane matrix;
 
-    juce::Viewport detectView, synthView, arpView, matrixView;
+    juce::Viewport detectView, synthView, arpView, fxView, matrixView;
     int current = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ExpressionSynthEditor)

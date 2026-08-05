@@ -140,6 +140,7 @@ void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerB
     pitchToMidi.prepare (sampleRate);
     articulationAnalyser.prepare (sampleRate, samplesPerBlock);
     arpeggiator.prepare (sampleRate);
+    effects.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
     synthEngine.prepare (sampleRate, samplesPerBlock);
     analysisBuffer.setSize (1, samplesPerBlock);
 
@@ -248,6 +249,11 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     const float* monoInput = analysisBuffer.getReadPointer (0);
     buffer.clear();
     synthEngine.renderNextBlock (buffer, generatedMidi, apvts, modulation, monoInput);
+
+    // 7. Effects run once on the mix, so their cost is independent of how
+    //    many voices are sounding. They share the same tempo the
+    //    arpeggiator uses.
+    effects.process (buffer, apvts, modulation, bpm);
 }
 
 juce::AudioProcessorEditor* ExpressionSynthProcessor::createEditor()

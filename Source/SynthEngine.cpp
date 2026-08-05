@@ -1,6 +1,7 @@
 #include "SynthEngine.h"
 #include "ExpressionMapper.h"
 #include "Arpeggiator.h"
+#include "EffectsChain.h"
 
 void SynthVoice::prepare (const juce::dsp::ProcessSpec& spec)
 {
@@ -479,6 +480,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
 
     ExpressionMapper::addParameters (params);
     Arpeggiator::addParameters (params);
+    EffectsChain::addParameters (params);
 
     return { params.begin(), params.end() };
 }

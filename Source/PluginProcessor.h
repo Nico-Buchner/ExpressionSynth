@@ -4,6 +4,7 @@
 #include "ExpressionMapper.h"
 #include "ModulationState.h"
 #include "Arpeggiator.h"
+#include "EffectsChain.h"
 #include "ArticulationAnalyser.h"
 #include "PitchToMidiConverter.h"
 #include "SynthEngine.h"
@@ -80,6 +81,7 @@ private:
     ExpressionMapper expressionMapper;
     ArticulationAnalyser articulationAnalyser;
     Arpeggiator arpeggiator;
+    EffectsChain effects;
 
     // Notes as generated, before the arpeggiator rearranges them.
     juce::MidiBuffer rawMidi;

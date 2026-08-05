@@ -19,7 +19,8 @@ public:
     // Off is a source rather than a separate enable flag, so a slot has
     // one obvious way to be inactive instead of two.
     enum class Source { Off, Amplitude, Pitch, SpectralCentroid, SpectralFlatness, Onset };
-    enum class Destination { FilterCutoff, FilterResonance, Amplitude, PitchBend, OscMorph };
+    enum class Destination { FilterCutoff, FilterResonance, Amplitude, PitchBend, OscMorph,
+                             DriveAmount, DelayMix, DelayFeedback, ReverbMix };
     enum class Curve { Linear, Exponential, Logarithmic };
 
     static juce::StringArray getSourceNames()
@@ -29,7 +30,8 @@ public:
 
     static juce::StringArray getDestinationNames()
     {
-        return { "Filter cutoff", "Resonance", "Level", "Pitch bend", "Waveshape" };
+        return { "Filter cutoff", "Resonance", "Level", "Pitch bend", "Waveshape",
+                 "Drive", "Delay mix", "Delay feedback", "Reverb mix" };
     }
 
     static juce::StringArray getCurveNames()
