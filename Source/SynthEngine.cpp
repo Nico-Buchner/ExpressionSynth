@@ -1,5 +1,6 @@
 #include "SynthEngine.h"
 #include "ExpressionMapper.h"
+#include "Arpeggiator.h"
 
 void SynthVoice::prepare (const juce::dsp::ProcessSpec& spec)
 {
@@ -477,6 +478,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
         juce::NormalisableRange<float> (0.5f, 12.0f), 2.0f));
 
     ExpressionMapper::addParameters (params);
+    Arpeggiator::addParameters (params);
 
     return { params.begin(), params.end() };
 }

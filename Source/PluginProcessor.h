@@ -3,6 +3,7 @@
 #include "FeatureExtractor.h"
 #include "ExpressionMapper.h"
 #include "ModulationState.h"
+#include "Arpeggiator.h"
 #include "ArticulationAnalyser.h"
 #include "PitchToMidiConverter.h"
 #include "SynthEngine.h"
@@ -61,6 +62,7 @@ public:
     const SpectrumData& getSpectrum() const { return featureExtractor.getSpectrum(); }
     const ArticulationAnalyser& getAnalyser() const { return articulationAnalyser; }
     bool isAdaptive() const { return adaptiveActive.load(); }
+    bool isArpEnabled() const { return arpeggiator.isEnabled(); }
     float getAnalysisLatencyMs() const { return featureExtractor.getAnalysisLatencyMs(); }
     bool isSyncMode() const { return synthEngine.isSyncMode(); }
     float getSyncMix() const { return synthEngine.getSyncMix(); }
@@ -77,6 +79,10 @@ private:
     FeatureExtractor featureExtractor;
     ExpressionMapper expressionMapper;
     ArticulationAnalyser articulationAnalyser;
+    Arpeggiator arpeggiator;
+
+    // Notes as generated, before the arpeggiator rearranges them.
+    juce::MidiBuffer rawMidi;
     PitchToMidiConverter pitchToMidi;
     std::atomic<bool> adaptiveActive { false };
     SynthEngine synthEngine;

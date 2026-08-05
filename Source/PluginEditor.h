@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "UIComponents.h"
 #include "ExpressionMapper.h"
+#include "Arpeggiator.h"
 
 // Thin track, small round grip. Deliberately quiet so the meters and the
 // spectrum stay the loudest thing on screen.
@@ -466,6 +467,108 @@ private:
 };
 
 // ---------------------------------------------------------------------
+// ARP: pattern generation.
+//
+// The note-source choice is the substantive control here, not the
+// pattern: a conventional arpeggiator holds a chord, and monophonic
+// detection supplies none, so where the notes come from is a real
+// decision rather than a default.
+// ---------------------------------------------------------------------
+class ArpPane : public juce::Component
+{
+public:
+    ArpPane (ExpressionSynthProcessor& p) : proc (p)
+    {
+        auto& s = proc.getParams();
+
+        auto add = [this, &s] (juce::String id, juce::String label)
+        {
+            auto row = std::make_unique<ParamRow> (s, id, label);
+            addAndMakeVisible (*row);
+            rows.push_back (std::move (row));
+        };
+
+        add (Arpeggiator::enabledParamID, "Arp");
+        add (Arpeggiator::sourceParamID,  "Source");
+        add (Arpeggiator::chordParamID,   "Chord");
+        add (Arpeggiator::patternParamID, "Pattern");
+        add (Arpeggiator::rateParamID,    "Rate");
+        add (Arpeggiator::octavesParamID, "Octaves");
+        add (Arpeggiator::gateParamID,    "Gate");
+        add (Arpeggiator::swingParamID,   "Swing");
+        add (Arpeggiator::freeBpmParamID, "Free tempo");
+    }
+
+    void refresh()
+    {
+        auto& s = proc.getParams();
+        const int src = (int) s.getRawParameterValue (Arpeggiator::sourceParamID)->load();
+
+        juce::String h;
+        if (src == 0)
+            h = "Holds whatever is played on a keyboard. The instrument shapes the timbre "
+                "of the pattern.";
+        else if (src == 1)
+            h = "Builds a chord upward from the detected note and arpeggiates it. One note "
+                "in, a pattern out - Chord sets which.";
+        else
+            h = "Notes played into the plugin accumulate and are replayed as a pattern. "
+                "The instrument still supplies every note. Stop for two seconds to clear.";
+
+        if (h != hint)
+        {
+            hint = h;
+            repaint (hintArea);
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (size_t i = 0; i < headers.size(); ++i)
+            drawGroupHeader (g, headers[i].first, headers[i].second);
+
+        g.setColour (Palette::dim);
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawFittedText (hint, hintArea, juce::Justification::topLeft, 3);
+        g.drawFittedText ("Free tempo is used only where the host provides none.",
+                           tempoNote, juce::Justification::topLeft, 2);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        headers.clear();
+
+        auto place = [&r, this] (size_t from, size_t to)
+        {
+            for (size_t i = from; i < to && i < rows.size(); ++i)
+                rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+            r.removeFromTop (8);
+        };
+
+        headers.push_back ({ "Notes", r.removeFromTop (30) });
+        place (0, 3);
+        hintArea = r.removeFromTop (44);
+
+        headers.push_back ({ "Pattern", r.removeFromTop (30) });
+        place (3, 8);
+
+        headers.push_back ({ "Tempo", r.removeFromTop (30) });
+        place (8, 9);
+        tempoNote = r.removeFromTop (28);
+    }
+
+    static constexpr int contentHeight = 560;
+
+private:
+    ExpressionSynthProcessor& proc;
+    std::vector<std::unique_ptr<ParamRow>> rows;
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
+    juce::Rectangle<int> hintArea, tempoNote;
+    juce::String hint;
+};
+
+// ---------------------------------------------------------------------
 // MATRIX: what drives what, and now editable.
 //
 // Six slots, each four parameters. Routes were made data rather than code
@@ -549,13 +652,13 @@ class ExpressionSynthEditor : public juce::AudioProcessorEditor,
 public:
     explicit ExpressionSynthEditor (ExpressionSynthProcessor& p)
         : AudioProcessorEditor (&p), proc (p),
-          detect (p), synth (p), matrix (p)
+          detect (p), synth (p), arp (p), matrix (p)
     {
         addAndMakeVisible (tabs);
-        tabs.setOptions ({ "Detect", "Synth", "Matrix" });
+        tabs.setOptions ({ "Detect", "Synth", "Arp", "Matrix" });
         tabs.onSelect = [this] (int i) { showPane (i); };
 
-        for (auto* v : { &detectView, &synthView, &matrixView })
+        for (auto* v : { &detectView, &synthView, &arpView, &matrixView })
         {
             addChildComponent (*v);
             v->setScrollBarsShown (true, false);
@@ -563,6 +666,7 @@ public:
 
         detectView.setViewedComponent (&detect, false);
         synthView.setViewedComponent (&synth, false);
+        arpView.setViewedComponent (&arp, false);
         matrixView.setViewedComponent (&matrix, false);
 
         showPane (0);
@@ -613,11 +717,12 @@ public:
 
         tabs.setBounds (r.removeFromTop (36).reduced (12, 3));
 
-        for (auto* v : { &detectView, &synthView, &matrixView })
+        for (auto* v : { &detectView, &synthView, &arpView, &matrixView })
             v->setBounds (r);
 
         detect.setSize (r.getWidth() - 10, DetectPane::contentHeight);
         synth.setSize  (r.getWidth() - 10, SynthPane::contentHeight);
+        arp.setSize    (r.getWidth() - 10, ArpPane::contentHeight);
         matrix.setSize (r.getWidth() - 10, MatrixPane::contentHeight);
     }
 
@@ -628,7 +733,8 @@ private:
     {
         detectView.setVisible (index == 0);
         synthView.setVisible (index == 1);
-        matrixView.setVisible (index == 2);
+        arpView.setVisible (index == 2);
+        matrixView.setVisible (index == 3);
         current = index;
     }
 
@@ -638,6 +744,7 @@ private:
 
         if (current == 0) detect.refresh();
         else if (current == 1) synth.refresh();
+        else if (current == 2) arp.refresh();
     }
 
     static void drawStripMeter (juce::Graphics& g, juce::Rectangle<int> area,
@@ -664,9 +771,10 @@ private:
 
     DetectPane detect;
     SynthPane synth;
+    ArpPane arp;
     MatrixPane matrix;
 
-    juce::Viewport detectView, synthView, matrixView;
+    juce::Viewport detectView, synthView, arpView, matrixView;
     int current = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ExpressionSynthEditor)

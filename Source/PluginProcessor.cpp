@@ -139,6 +139,7 @@ void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerB
     expressionMapper.prepare (sampleRate);
     pitchToMidi.prepare (sampleRate);
     articulationAnalyser.prepare (sampleRate, samplesPerBlock);
+    arpeggiator.prepare (sampleRate);
     synthEngine.prepare (sampleRate, samplesPerBlock);
     analysisBuffer.setSize (1, samplesPerBlock);
 
@@ -171,22 +172,38 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     //    same voice pool; they are told apart by channel, so the
     //    modulations that belong to a detected note are not applied to a
     //    note somebody fingered.
+    rawMidi.clear();
     generatedMidi.clear();
 
     if (apvts.getRawParameterValue (SynthEngine::audioNotesParamID)->load() > 0.5f)
     {
-        pitchToMidi.process (features, generatedMidi, buffer.getNumSamples());
+        pitchToMidi.process (features, rawMidi, buffer.getNumSamples());
     }
     else if (pitchToMidi.getCurrentNote() >= 0)
     {
         // Audio triggering was switched off mid-note; release it rather
         // than leaving it sounding forever.
         pitchToMidi.reset();
-        generatedMidi.addEvent (juce::MidiMessage::allNotesOff (NoteOrigin::audioChannel), 0);
+        rawMidi.addEvent (juce::MidiMessage::allNotesOff (NoteOrigin::audioChannel), 0);
     }
 
     if (apvts.getRawParameterValue (SynthEngine::midiNotesParamID)->load() > 0.5f)
-        generatedMidi.addEvents (midi, 0, buffer.getNumSamples(), 0);
+        rawMidi.addEvents (midi, 0, buffer.getNumSamples(), 0);
+
+    // 3c. The arpeggiator replaces those notes with a pattern built from
+    //     them, or passes them straight through when it is off. Tempo
+    //     comes from the host where there is one, otherwise from its own
+    //     free-running setting.
+    double bpm = apvts.getRawParameterValue (Arpeggiator::freeBpmParamID)->load();
+
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto hostBpm = position->getBpm())
+                bpm = *hostBpm;
+
+    arpeggiator.setParams (apvts);
+    arpeggiator.process (rawMidi, pitchToMidi.getCurrentNote(),
+                          generatedMidi, buffer.getNumSamples(), bpm);
 
     // 3b. Watch how the source is being played. In adaptive mode this
     //     feeds straight back into the detection thresholds, so a player
