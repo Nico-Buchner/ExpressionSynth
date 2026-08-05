@@ -54,13 +54,11 @@ public:
 
     juce::AudioProcessorValueTreeState& getParams() { return apvts; }
 
-    void setupDefaultRoutes();
 
     FeatureExtractor::Features getFeaturesForDisplay() const { return featureExtractor.getLatestFeatures(); }
     int getActiveNoteForDisplay() const { return pitchToMidi.getCurrentNote(); }
     juce::String getActiveProfileName() const { return pitchToMidi.getProfile().name; }
     const SpectrumData& getSpectrum() const { return featureExtractor.getSpectrum(); }
-    const ExpressionMapper& getMapper() const { return expressionMapper; }
     const ArticulationAnalyser& getAnalyser() const { return articulationAnalyser; }
     bool isAdaptive() const { return adaptiveActive.load(); }
     float getAnalysisLatencyMs() const { return featureExtractor.getAnalysisLatencyMs(); }

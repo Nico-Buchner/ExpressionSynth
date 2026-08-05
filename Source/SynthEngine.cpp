@@ -1,4 +1,5 @@
 #include "SynthEngine.h"
+#include "ExpressionMapper.h"
 
 void SynthVoice::prepare (const juce::dsp::ProcessSpec& spec)
 {
@@ -474,6 +475,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { bendRangeParamID, 1 }, "Bend Range (semitones)",
         juce::NormalisableRange<float> (0.5f, 12.0f), 2.0f));
+
+    ExpressionMapper::addParameters (params);
 
     return { params.begin(), params.end() };
 }

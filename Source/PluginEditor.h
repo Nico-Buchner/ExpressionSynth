@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "UIComponents.h"
+#include "ExpressionMapper.h"
 
 // Thin track, small round grip. Deliberately quiet so the meters and the
 // spectrum stay the loudest thing on screen.
@@ -465,109 +466,78 @@ private:
 };
 
 // ---------------------------------------------------------------------
-// MATRIX: what drives what.
+// MATRIX: what drives what, and now editable.
+//
+// Six slots, each four parameters. Routes were made data rather than code
+// from the outset so that this pane could exist; reading them from
+// parameters means editing here needs no locking against the audio
+// thread, and the host saves them with the patch for free.
 // ---------------------------------------------------------------------
 class MatrixPane : public juce::Component
 {
 public:
-    MatrixPane (ExpressionSynthProcessor& p) : proc (p) {}
+    MatrixPane (ExpressionSynthProcessor& p) : proc (p)
+    {
+        auto& s = proc.getParams();
+
+        for (int slot = 0; slot < ExpressionMapper::numSlots; ++slot)
+        {
+            auto add = [this, &s] (juce::String id, juce::String label)
+            {
+                auto row = std::make_unique<ParamRow> (s, id, label);
+                addAndMakeVisible (*row);
+                rows.push_back (std::move (row));
+            };
+
+            add (ExpressionMapper::sourceParamID (slot),      "Source");
+            add (ExpressionMapper::destinationParamID (slot), "Destination");
+            add (ExpressionMapper::depthParamID (slot),       "Depth");
+            add (ExpressionMapper::curveParamID (slot),       "Curve");
+        }
+    }
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().reduced (14, 12);
-
-        for (const auto& route : proc.getMapper().getRoutes())
-        {
-            auto card = r.removeFromTop (46);
-            g.setColour (Palette::panel);
-            g.fillRoundedRectangle (card.toFloat(), 4.0f);
-            g.setColour (Palette::line);
-            g.drawRoundedRectangle (card.toFloat().reduced (0.5f), 4.0f, 1.0f);
-
-            auto inner = card.reduced (12, 8);
-            auto top = inner.removeFromTop (16);
-
-            g.setColour (sourceColour (route.source));
-            g.fillRect (top.removeFromLeft (6).withSizeKeepingCentre (6, 6));
-            top.removeFromLeft (6);
-
-            g.setColour (Palette::bone);
-            g.setFont (juce::FontOptions (11.0f));
-            g.drawText (sourceName (route.source), top, juce::Justification::centredLeft);
-            g.drawText (destinationName (route.destination), top, juce::Justification::centredRight);
-
-            g.setColour (juce::Colour (0xff4a4f5c));
-            g.drawText ("->", top, juce::Justification::centred);
-
-            drawLabel (g, "Depth " + juce::String (route.depth, 2)
-                          + "    " + curveName (route.curve)
-                          + "    " + juce::String ((int) route.smoothingMs) + " ms",
-                        inner, Palette::dim, 9.0f);
-
-            r.removeFromTop (7);
-        }
+        for (size_t i = 0; i < headers.size(); ++i)
+            drawGroupHeader (g, headers[i].first, headers[i].second);
 
         g.setColour (Palette::dim);
         g.setFont (juce::FontOptions (10.0f));
-        g.drawFittedText ("Pitch is not routed here. It selects the note directly, "
-                           "and its deviation from that note becomes bend.",
-                           r.removeFromTop (34), juce::Justification::topLeft, 2);
+        g.drawFittedText ("Several slots may target one destination; they add. "
+                           "A slot set to Off is inactive. Pitch bend already carries "
+                           "the detected note's deviation, so a route to it adds on top.",
+                           footer, juce::Justification::topLeft, 3);
     }
 
-    static constexpr int contentHeight = 300;
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        headers.clear();
+
+        for (int slot = 0; slot < ExpressionMapper::numSlots; ++slot)
+        {
+            headers.push_back ({ "Route " + juce::String (slot + 1), r.removeFromTop (30) });
+
+            for (int k = 0; k < 4; ++k)
+            {
+                const size_t index = (size_t) (slot * 4 + k);
+                if (index < rows.size())
+                    rows[index]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+            }
+
+            r.removeFromTop (6);
+        }
+
+        footer = r.removeFromTop (44);
+    }
+
+    static constexpr int contentHeight = 880;
 
 private:
-    static juce::String sourceName (ExpressionMapper::Source s)
-    {
-        switch (s)
-        {
-            case ExpressionMapper::Source::Amplitude:        return "Amplitude";
-            case ExpressionMapper::Source::Pitch:            return "Pitch";
-            case ExpressionMapper::Source::SpectralCentroid: return "Brightness";
-            case ExpressionMapper::Source::SpectralFlatness: return "Noisiness";
-            case ExpressionMapper::Source::Onset:            return "Onset";
-        }
-        return {};
-    }
-
-    static juce::Colour sourceColour (ExpressionMapper::Source s)
-    {
-        switch (s)
-        {
-            case ExpressionMapper::Source::Amplitude:        return Palette::amp;
-            case ExpressionMapper::Source::Pitch:            return Palette::conf;
-            case ExpressionMapper::Source::SpectralCentroid: return Palette::bright;
-            case ExpressionMapper::Source::SpectralFlatness: return Palette::noise;
-            case ExpressionMapper::Source::Onset:            return Palette::onset;
-        }
-        return Palette::muted;
-    }
-
-    static juce::String destinationName (ExpressionMapper::Destination d)
-    {
-        switch (d)
-        {
-            case ExpressionMapper::Destination::FilterCutoff:    return "Filter cutoff";
-            case ExpressionMapper::Destination::FilterResonance: return "Resonance";
-            case ExpressionMapper::Destination::Amplitude:       return "Level";
-            case ExpressionMapper::Destination::PitchBend:       return "Pitch bend";
-            case ExpressionMapper::Destination::OscMorph:        return "Waveshape";
-        }
-        return {};
-    }
-
-    static juce::String curveName (ExpressionMapper::Curve c)
-    {
-        switch (c)
-        {
-            case ExpressionMapper::Curve::Linear:      return "Linear";
-            case ExpressionMapper::Curve::Exponential: return "Exponential";
-            case ExpressionMapper::Curve::Logarithmic: return "Logarithmic";
-        }
-        return {};
-    }
-
     ExpressionSynthProcessor& proc;
+    std::vector<std::unique_ptr<ParamRow>> rows;
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
+    juce::Rectangle<int> footer;
 };
 
 // ---------------------------------------------------------------------

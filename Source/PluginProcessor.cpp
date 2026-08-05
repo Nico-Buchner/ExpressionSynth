@@ -8,7 +8,6 @@ ExpressionSynthProcessor::ExpressionSynthProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", SynthEngine::createParameterLayout())
 {
-    setupDefaultRoutes();
 
     // Listen for articulation changes so the converter's profile stays
     // in sync with the parameters without polling every block.
@@ -134,35 +133,6 @@ void ExpressionSynthProcessor::handleAsyncUpdate()
                preset.pitchMode == ArticulationProfile::PitchMode::Glide ? 1.0f : 0.0f);
 }
 
-void ExpressionSynthProcessor::setupDefaultRoutes()
-{
-    using Source = ExpressionMapper::Source;
-    using Dest = ExpressionMapper::Destination;
-    using Curve = ExpressionMapper::Curve;
-
-    expressionMapper.clearRoutes();
-
-    // Amplitude -> output gain, fairly direct and fast so dynamics track
-    expressionMapper.addRoute ({ Source::Amplitude, Dest::Amplitude,
-                                  Curve::Linear, 1.0f, 15.0f });
-
-    // Spectral centroid (brightness) -> filter cutoff. Exponential curve
-    // because a bright source should open the filter dramatically while
-    // quiet/dull input stays closed.
-    expressionMapper.addRoute ({ Source::SpectralCentroid, Dest::FilterCutoff,
-                                  Curve::Exponential, 1.0f, 30.0f });
-
-    // Spectral centroid -> waveshape. The most on-thesis mapping in the
-    // plugin: input harmonic content drives output harmonic content.
-    // Smoothed a little faster than cutoff so it tracks attack transients.
-    expressionMapper.addRoute ({ Source::SpectralCentroid, Dest::OscMorph,
-                                  Curve::Linear, 1.0f, 25.0f });
-
-    // Note: gross pitch is no longer routed through here - it's handled
-    // by PitchToMidiConverter selecting the actual note, with fine pitch
-    // (cents deviation / vibrato) applied directly in processBlock().
-}
-
 void ExpressionSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     featureExtractor.prepare (sampleRate, samplesPerBlock);
@@ -232,14 +202,10 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         featureExtractor.setEnvelopeTimes (adapted.ampAttackMs, adapted.ampReleaseMs);
     }
 
-    // 4. Push timbre/amplitude features into the modulation state.
-    expressionMapper.apply (features, modulation, buffer.getNumSamples());
-
-    // 5. Fine pitch expression: cents deviation of the detected pitch
-    //    from the note PitchToMidiConverter selected, smoothed. This is
-    //    what carries vibrato/expressive bend on top of the stable note
-    //    - separate from ExpressionMapper since it depends on the note
-    //    converter's state, not just the raw feature values.
+    // 4. Fine pitch expression first: the cents deviation of the detected
+    //    pitch from the note it was quantised to. The matrix runs after
+    //    this so that a slot routed to bend adds to it rather than
+    //    overwriting a note's tuning.
     const int activeNote = pitchToMidi.getCurrentNote();
     if (activeNote >= 0 && features.pitchHz > 0.0f)
     {
@@ -255,6 +221,9 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     pitchBendSmoother.skip (juce::jmax (0, buffer.getNumSamples() - 1));
     modulation.pitchBendSemitones.store (pitchBendSmoother.getNextValue());
+
+    // 5. Apply the routing matrix.
+    expressionMapper.apply (features, modulation, buffer.getNumSamples(), apvts);
 
     // 6. Render. The input is replaced, not passed through - but sync
     //    mode reads the mono sum, so the analysis buffer is handed over
