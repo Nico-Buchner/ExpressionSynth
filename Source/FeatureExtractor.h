@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_dsp/juce_dsp.h>
+#include "SpectrumData.h"
 
 class FeatureExtractor
 {
@@ -28,6 +29,7 @@ public:
     void process (const juce::AudioBuffer<float>& input);
 
     const Features& getLatestFeatures() const noexcept { return current; }
+    const SpectrumData& getSpectrum() const noexcept { return spectrum; }
 
 private:
     void updateAmplitude (const juce::AudioBuffer<float>& input);
@@ -55,6 +57,12 @@ private:
 
     int tauMin = 2;
     int tauMax = pitchBufferSize / 2;
+
+    void updateSpectrumDisplay (const float* magnitudes, int numBins);
+
+    SpectrumData spectrum;
+    std::vector<int> binToBand;
+    std::vector<float> floorTrack;
 
     std::unique_ptr<juce::dsp::FFT> fft;
     juce::AudioBuffer<float> fftBuffer;

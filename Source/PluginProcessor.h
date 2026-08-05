@@ -58,6 +58,8 @@ public:
     FeatureExtractor::Features getFeaturesForDisplay() const { return featureExtractor.getLatestFeatures(); }
     int getActiveNoteForDisplay() const { return pitchToMidi.getCurrentNote(); }
     juce::String getActiveProfileName() const { return pitchToMidi.getProfile().name; }
+    const SpectrumData& getSpectrum() const { return featureExtractor.getSpectrum(); }
+    const ExpressionMapper& getMapper() const { return expressionMapper; }
 
 private:
     void parameterChanged (const juce::String& paramID, float newValue) override;

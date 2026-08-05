@@ -1,4 +1,5 @@
 #include "FeatureExtractor.h"
+#include <algorithm>
 
 void FeatureExtractor::prepare (double newSampleRate, int newBlockSize)
 {
@@ -17,6 +18,26 @@ void FeatureExtractor::prepare (double newSampleRate, int newBlockSize)
     juce::dsp::WindowingFunction<float>::fillWindowingTables (
         window.getData(), 1 << fftOrder, juce::dsp::WindowingFunction<float>::hann);
     fft = std::make_unique<juce::dsp::FFT> (fftOrder);
+
+    // Map each FFT bin onto a log-spaced display band once, rather than
+    // recomputing logarithms for every bin on every block.
+    const int numBins = (1 << fftOrder) / 2;
+    const float binHz = (float) sampleRate / (float) (1 << fftOrder);
+    binToBand.assign ((size_t) numBins, -1);
+
+    for (int bin = 1; bin < numBins; ++bin)
+    {
+        const float hz = (float) bin * binHz;
+        if (hz < SpectrumData::minHz || hz > SpectrumData::maxHz)
+            continue;
+
+        const float pos = SpectrumData::positionForHz (hz);
+        binToBand[(size_t) bin] = juce::jlimit (0, SpectrumData::numBands - 1,
+            (int) std::round (pos * (SpectrumData::numBands - 1)));
+    }
+
+    floorTrack.assign (SpectrumData::numBands, 1.0f);
+    spectrum.reset();
 
     reset();
 }
@@ -206,6 +227,57 @@ void FeatureExtractor::updateSpectralFeatures (const juce::AudioBuffer<float>&)
             ? juce::jlimit (0.0f, 1.0f, geometricMean / arithmeticMean)
             : 0.0f;
     }
+
+    updateSpectrumDisplay (fftData, numBins);
+}
+
+void FeatureExtractor::updateSpectrumDisplay (const float* magnitudes, int numBins)
+{
+    float banded[SpectrumData::numBands] = {};
+
+    // Highest magnitude wins the band. Averaging would smear narrow
+    // partials into the noise around them, which is exactly the detail
+    // the display exists to show.
+    for (int bin = 1; bin < numBins; ++bin)
+    {
+        const int band = binToBand[(size_t) bin];
+        if (band >= 0)
+            banded[band] = juce::jmax (banded[band], magnitudes[bin]);
+    }
+
+    // Normalise against the loudest band so the display is readable at
+    // any input level; absolute magnitudes are not meaningful here.
+    float loudest = 0.0f;
+    for (float v : banded)
+        loudest = juce::jmax (loudest, v);
+
+    const float norm = loudest > 1.0e-6f ? 1.0f / loudest : 0.0f;
+
+    for (int b = 0; b < SpectrumData::numBands; ++b)
+    {
+        const float value = banded[b] * norm;
+
+        spectrum.bands[b].store (value, std::memory_order_relaxed);
+
+        // Peak hold falls slowly, so a transient partial stays readable.
+        const float prevPeak = spectrum.peaks[b].load (std::memory_order_relaxed);
+        spectrum.peaks[b].store (juce::jmax (prevPeak * 0.96f, value),
+                                  std::memory_order_relaxed);
+
+        // Minimum tracker: falls fast, rises very slowly, so a loud note
+        // passing through cannot drag the floor estimate up with it.
+        floorTrack[(size_t) b] = value < floorTrack[(size_t) b]
+            ? value
+            : floorTrack[(size_t) b] * 0.9995f + value * 0.0005f;
+    }
+
+    // Median of the per-band minima. Partials sitting near this level are
+    // the ones the pitch tracker will struggle to resolve.
+    std::vector<float> sorted (floorTrack);
+    std::nth_element (sorted.begin(),
+                       sorted.begin() + sorted.size() / 2,
+                       sorted.end());
+    spectrum.noiseFloor.store (sorted[sorted.size() / 2], std::memory_order_relaxed);
 }
 
 void FeatureExtractor::updateOnset (float currentAmplitude)

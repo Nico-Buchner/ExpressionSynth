@@ -1,139 +1,544 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "UIComponents.h"
 
-/**
-    Live diagnostic readout of what the analyser is actually detecting.
+// Thin track, small round grip. Deliberately quiet so the meters and the
+// spectrum stay the loudest thing on screen.
+class RowLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+                            float sliderPos, float, float,
+                            juce::Slider::SliderStyle, juce::Slider&) override
+    {
+        const float cy = (float) y + (float) height * 0.5f;
 
-    This exists because of a specific practical constraint: builds go
-    through cloud CI, so a silent failure ("I play a note and nothing
-    happens") would otherwise cost a full rebuild cycle just to find out
-    whether the problem is pitch confidence, an amplitude threshold, or
-    the synth itself. Showing the raw feature values on-device turns that
-    into a glance.
+        g.setColour (juce::Colour (0xff2a2f3a));
+        g.fillRect ((float) x, cy - 1.0f, (float) width, 2.0f);
 
-    Read these while testing each articulation:
-      - Amp below the onset threshold  -> nothing will ever trigger
-      - Confidence low                 -> YIN isn't locking on; check input
-                                          level, or the source may be too
-                                          noisy/polyphonic
-      - Note stuck on                  -> release threshold too low
-      - Note flickering                -> raise pitch stability, or lower
-                                          retrigger sensitivity
-*/
+        g.setColour (Palette::bone);
+        g.fillEllipse (sliderPos - 6.0f, cy - 6.0f, 12.0f, 12.0f);
+    }
+};
+
+// One parameter: name on the left, slider in the middle, value on the right.
+class ParamRow : public juce::Component
+{
+public:
+    ParamRow (juce::AudioProcessorValueTreeState& s, juce::String id, juce::String labelText)
+        : state (s), paramID (std::move (id)), label (std::move (labelText))
+    {
+        slider.setSliderStyle (juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        slider.setLookAndFeel (&lnf);
+        slider.onValueChange = [this] { repaint(); };
+        addAndMakeVisible (slider);
+
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>
+                        (state, paramID, slider);
+    }
+
+    ~ParamRow() override { slider.setLookAndFeel (nullptr); }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        drawLabel (g, label, r.removeFromLeft (92), Palette::muted, 10.0f);
+
+        juce::String text;
+        if (auto* p = state.getParameter (paramID))
+            text = p->getCurrentValueAsText();
+
+        g.setColour (juce::Colour (0xff98a0b0));
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (text, r.removeFromRight (56), juce::Justification::centredRight);
+    }
+
+    void resized() override
+    {
+        slider.setBounds (getLocalBounds().withTrimmedLeft (96).withTrimmedRight (60));
+    }
+
+    static constexpr int preferredHeight = 26;
+
+private:
+    juce::AudioProcessorValueTreeState& state;
+    juce::String paramID, label;
+    juce::Slider slider;
+    RowLookAndFeel lnf;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+};
+
+inline void drawGroupHeader (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area)
+{
+    g.setColour (Palette::line);
+    g.drawHorizontalLine (area.getY(), (float) area.getX(), (float) area.getRight());
+    drawLabel (g, text, area.withTrimmedTop (10).withHeight (12), Palette::dim, 9.0f);
+}
+
+// ---------------------------------------------------------------------
+// DETECT: everything about getting the plugin to trigger correctly.
+// ---------------------------------------------------------------------
+class DetectPane : public juce::Component
+{
+public:
+    DetectPane (ExpressionSynthProcessor& p)
+        : proc (p), spectrum (p.getSpectrum()),
+          ampMeter ("Amplitude", Palette::amp),
+          confMeter ("Pitch confidence", Palette::conf),
+          onsetMeter ("Onset", Palette::onset)
+    {
+        auto& s = proc.getParams();
+
+        addAndMakeVisible (spectrum);
+        addAndMakeVisible (articulation);
+        addAndMakeVisible (ampMeter);
+        addAndMakeVisible (confMeter);
+        addAndMakeVisible (onsetMeter);
+        addAndMakeVisible (mode);
+
+        articulation.setOptions (ArticulationProfile::getPresetNames());
+        if (auto* p2 = s.getParameter (SynthEngine::articulationPresetParamID))
+            articulation.setSelected ((int) (p2->getValue() * 4.0f + 0.5f));
+
+        articulation.onSelect = [this, &s] (int i)
+        {
+            if (auto* p3 = s.getParameter (SynthEngine::articulationPresetParamID))
+            {
+                p3->beginChangeGesture();
+                p3->setValueNotifyingHost ((float) i / 4.0f);
+                p3->endChangeGesture();
+            }
+        };
+
+        // Release marker is secondary: the hysteresis pair share one
+        // track so the gap between them is visible as a thing, not a
+        // relationship you have to hold in your head.
+        ampMeter.addMarker (s.getParameter (SynthEngine::releaseThresholdParamID), "release", false);
+        ampMeter.addMarker (s.getParameter (SynthEngine::onsetThresholdParamID), "onset", true);
+        confMeter.addMarker (s.getParameter (SynthEngine::confidenceGateParamID), "gate", true);
+        onsetMeter.addMarker (s.getParameter (SynthEngine::retriggerSensParamID), "retrigger", true);
+
+        mode.setOptions ({ "Quantised", "Glide" });
+        if (auto* g = s.getParameter (SynthEngine::glideModeParamID))
+            mode.setSelected (g->getValue() > 0.5f ? 1 : 0);
+
+        mode.onSelect = [&s] (int i)
+        {
+            if (auto* g = s.getParameter (SynthEngine::glideModeParamID))
+            {
+                g->beginChangeGesture();
+                g->setValueNotifyingHost (i == 1 ? 1.0f : 0.0f);
+                g->endChangeGesture();
+            }
+        };
+
+        stability = std::make_unique<ParamRow> (s, SynthEngine::pitchStabilityParamID, "Stability");
+        bendRange = std::make_unique<ParamRow> (s, SynthEngine::bendRangeParamID, "Bend range");
+        addAndMakeVisible (*stability);
+        addAndMakeVisible (*bendRange);
+    }
+
+    void refresh()
+    {
+        const auto f = proc.getFeaturesForDisplay();
+        const bool sounding = proc.getActiveNoteForDisplay() >= 0;
+
+        ampMeter.setValue (f.amplitude);
+        confMeter.setValue (f.pitchConfidence);
+        confMeter.setBarColour (f.pitchConfidence >= confMeter.getPrimaryThreshold()
+                                  ? Palette::conf : Palette::confLow);
+        onsetMeter.setValue (f.onsetStrength);
+
+        // Centroid arrives normalised against Nyquist; the display axis
+        // is logarithmic and tops out at 8 kHz, so convert.
+        const float centroidHz = f.spectralCentroid * (float) proc.getSampleRate() * 0.5f;
+        spectrum.setReadings (SpectrumData::positionForHz (centroidHz), f.pitchHz, sounding);
+
+        pitchText = sounding && f.pitchHz > 0.0f
+            ? juce::String (f.pitchHz, 1) + " Hz" : juce::String ("--");
+
+        spectrum.repaint();
+        ampMeter.repaint();
+        confMeter.repaint();
+        onsetMeter.repaint();
+        repaint (legendArea);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (Palette::dim);
+        g.setFont (juce::FontOptions (9.0f).withStyle ("Bold"));
+        g.drawText ("CENTROID   PITCH   PEAK   FLOOR        50 HZ - 8 KHZ  |  " + pitchText,
+                     legendArea, juce::Justification::centredLeft);
+        drawGroupHeader (g, "Pitch handling", groupArea);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+
+        spectrum.setBounds (r.removeFromTop (104));
+        legendArea = r.removeFromTop (18);
+        r.removeFromTop (6);
+
+        articulation.setBounds (r.removeFromTop (32));
+        r.removeFromTop (14);
+
+        ampMeter.setBounds (r.removeFromTop (ThresholdMeter::preferredHeight));
+        r.removeFromTop (10);
+        confMeter.setBounds (r.removeFromTop (ThresholdMeter::preferredHeight));
+        r.removeFromTop (10);
+        onsetMeter.setBounds (r.removeFromTop (ThresholdMeter::preferredHeight));
+        r.removeFromTop (6);
+
+        groupArea = r.removeFromTop (34);
+        stability->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+        bendRange->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+        r.removeFromTop (8);
+        mode.setBounds (r.removeFromTop (32));
+    }
+
+    static constexpr int contentHeight = 500;
+
+private:
+    ExpressionSynthProcessor& proc;
+    SpectrumDisplay spectrum;
+    SegmentedControl articulation, mode;
+    ThresholdMeter ampMeter, confMeter, onsetMeter;
+    std::unique_ptr<ParamRow> stability, bendRange;
+    juce::Rectangle<int> legendArea, groupArea;
+    juce::String pitchText { "--" };
+};
+
+// ---------------------------------------------------------------------
+// SYNTH: the engine.
+// ---------------------------------------------------------------------
+class SynthPane : public juce::Component
+{
+public:
+    SynthPane (ExpressionSynthProcessor& p) : proc (p)
+    {
+        auto& s = proc.getParams();
+        addAndMakeVisible (scope);
+
+        auto add = [this, &s] (const char* id, const char* label)
+        {
+            auto row = std::make_unique<ParamRow> (s, id, label);
+            addAndMakeVisible (*row);
+            rows.push_back (std::move (row));
+        };
+
+        add (SynthEngine::morphParamID,         "Waveshape");
+        add (SynthEngine::morphModDepthParamID, "Mod depth");
+        add (SynthEngine::unisonParamID,        "Voices");
+        add (SynthEngine::detuneParamID,        "Detune");
+        add (SynthEngine::spreadParamID,        "Spread");
+        add (SynthEngine::cutoffParamID,        "Cutoff");
+        add (SynthEngine::resonanceParamID,     "Resonance");
+        add (SynthEngine::cutoffModDepthParamID,"Mod depth");
+        add (SynthEngine::attackParamID,        "Attack");
+        add (SynthEngine::decayParamID,         "Decay");
+        add (SynthEngine::sustainParamID,       "Sustain");
+        add (SynthEngine::releaseParamID,       "Release");
+        add (SynthEngine::ampLevelParamID,      "Level");
+    }
+
+    void refresh()
+    {
+        auto& s = proc.getParams();
+        const float base = s.getRawParameterValue (SynthEngine::morphParamID)->load();
+        const float depth = s.getRawParameterValue (SynthEngine::morphModDepthParamID)->load();
+        const float live = juce::jlimit (0.0f, 1.0f,
+                                          base + proc.getFeaturesForDisplay().spectralCentroid * depth);
+        scope.setPositions (base, live);
+        scope.repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (size_t i = 0; i < headers.size(); ++i)
+            drawGroupHeader (g, headers[i].first, headers[i].second);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        headers.clear();
+
+        drawLabelSlot (r, "Oscillator");
+        scope.setBounds (r.removeFromTop (78));
+        r.removeFromTop (8);
+        place (r, 0, 2);
+
+        drawLabelSlot (r, "Unison");
+        place (r, 2, 5);
+
+        drawLabelSlot (r, "Filter");
+        place (r, 5, 8);
+
+        drawLabelSlot (r, "Envelope");
+        place (r, 8, 12);
+
+        drawLabelSlot (r, "Output");
+        place (r, 12, 13);
+    }
+
+    static constexpr int contentHeight = 720;
+
+private:
+    void drawLabelSlot (juce::Rectangle<int>& r, const juce::String& name)
+    {
+        headers.push_back ({ name, r.removeFromTop (32) });
+    }
+
+    void place (juce::Rectangle<int>& r, size_t from, size_t to)
+    {
+        for (size_t i = from; i < to && i < rows.size(); ++i)
+            rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+        r.removeFromTop (8);
+    }
+
+    ExpressionSynthProcessor& proc;
+    WaveScope scope;
+    std::vector<std::unique_ptr<ParamRow>> rows;
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
+};
+
+// ---------------------------------------------------------------------
+// MATRIX: what drives what.
+// ---------------------------------------------------------------------
+class MatrixPane : public juce::Component
+{
+public:
+    MatrixPane (ExpressionSynthProcessor& p) : proc (p) {}
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+
+        for (const auto& route : proc.getMapper().getRoutes())
+        {
+            auto card = r.removeFromTop (46);
+            g.setColour (Palette::panel);
+            g.fillRoundedRectangle (card.toFloat(), 4.0f);
+            g.setColour (Palette::line);
+            g.drawRoundedRectangle (card.toFloat().reduced (0.5f), 4.0f, 1.0f);
+
+            auto inner = card.reduced (12, 8);
+            auto top = inner.removeFromTop (16);
+
+            g.setColour (sourceColour (route.source));
+            g.fillRect (top.removeFromLeft (6).withSizeKeepingCentre (6, 6));
+            top.removeFromLeft (6);
+
+            g.setColour (Palette::bone);
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawText (sourceName (route.source), top, juce::Justification::centredLeft);
+            g.drawText (destinationName (route.destination), top, juce::Justification::centredRight);
+
+            g.setColour (juce::Colour (0xff4a4f5c));
+            g.drawText ("->", top, juce::Justification::centred);
+
+            drawLabel (g, "Depth " + juce::String (route.depth, 2)
+                          + "    " + curveName (route.curve)
+                          + "    " + juce::String ((int) route.smoothingMs) + " ms",
+                        inner, Palette::dim, 9.0f);
+
+            r.removeFromTop (7);
+        }
+
+        g.setColour (Palette::dim);
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawFittedText ("Pitch is not routed here. It selects the note directly, "
+                           "and its deviation from that note becomes bend.",
+                           r.removeFromTop (34), juce::Justification::topLeft, 2);
+    }
+
+    static constexpr int contentHeight = 300;
+
+private:
+    static juce::String sourceName (ExpressionMapper::Source s)
+    {
+        switch (s)
+        {
+            case ExpressionMapper::Source::Amplitude:        return "Amplitude";
+            case ExpressionMapper::Source::Pitch:            return "Pitch";
+            case ExpressionMapper::Source::SpectralCentroid: return "Brightness";
+            case ExpressionMapper::Source::SpectralFlatness: return "Noisiness";
+            case ExpressionMapper::Source::Onset:            return "Onset";
+        }
+        return {};
+    }
+
+    static juce::Colour sourceColour (ExpressionMapper::Source s)
+    {
+        switch (s)
+        {
+            case ExpressionMapper::Source::Amplitude:        return Palette::amp;
+            case ExpressionMapper::Source::Pitch:            return Palette::conf;
+            case ExpressionMapper::Source::SpectralCentroid: return Palette::bright;
+            case ExpressionMapper::Source::SpectralFlatness: return Palette::noise;
+            case ExpressionMapper::Source::Onset:            return Palette::onset;
+        }
+        return Palette::muted;
+    }
+
+    static juce::String destinationName (ExpressionMapper::Destination d)
+    {
+        switch (d)
+        {
+            case ExpressionMapper::Destination::FilterCutoff:    return "Filter cutoff";
+            case ExpressionMapper::Destination::FilterResonance: return "Resonance";
+            case ExpressionMapper::Destination::Amplitude:       return "Level";
+            case ExpressionMapper::Destination::PitchBend:       return "Pitch bend";
+            case ExpressionMapper::Destination::OscMorph:        return "Waveshape";
+        }
+        return {};
+    }
+
+    static juce::String curveName (ExpressionMapper::Curve c)
+    {
+        switch (c)
+        {
+            case ExpressionMapper::Curve::Linear:      return "Linear";
+            case ExpressionMapper::Curve::Exponential: return "Exponential";
+            case ExpressionMapper::Curve::Logarithmic: return "Logarithmic";
+        }
+        return {};
+    }
+
+    ExpressionSynthProcessor& proc;
+};
+
+// ---------------------------------------------------------------------
+// Editor: persistent status strip, tabs, scrolling panes.
+// ---------------------------------------------------------------------
 class ExpressionSynthEditor : public juce::AudioProcessorEditor,
                                private juce::Timer
 {
 public:
     explicit ExpressionSynthEditor (ExpressionSynthProcessor& p)
-        : AudioProcessorEditor (&p), processor (p)
+        : AudioProcessorEditor (&p), proc (p),
+          detect (p), synth (p), matrix (p)
     {
-        setSize (460, 340);
-        startTimerHz (24); // fast enough to see transients, cheap enough for iPad
+        addAndMakeVisible (tabs);
+        tabs.setOptions ({ "Detect", "Synth", "Matrix" });
+        tabs.onSelect = [this] (int i) { showPane (i); };
+
+        for (auto* v : { &detectView, &synthView, &matrixView })
+        {
+            addChildComponent (*v);
+            v->setScrollBarsShown (true, false);
+        }
+
+        detectView.setViewedComponent (&detect, false);
+        synthView.setViewedComponent (&synth, false);
+        matrixView.setViewedComponent (&matrix, false);
+
+        showPane (0);
+        setSize (520, 600);
+        startTimerHz (24);
     }
 
     ~ExpressionSynthEditor() override { stopTimer(); }
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xff1e1e24));
+        g.fillAll (Palette::ground);
 
-        const auto features = processor.getFeaturesForDisplay();
-        const int activeNote = processor.getActiveNoteForDisplay();
+        auto strip = getLocalBounds().removeFromTop (stripHeight);
+        g.setColour (Palette::panel);
+        g.fillRect (strip);
+        g.setColour (Palette::line);
+        g.drawHorizontalLine (strip.getBottom() - 1, 0.0f, (float) getWidth());
 
-        auto bounds = getLocalBounds().reduced (16);
+        auto inner = strip.reduced (16, 11);
+        auto top = inner.removeFromTop (26);
 
-        // --- Header ---
-        g.setColour (juce::Colours::white);
-        g.setFont (juce::FontOptions (18.0f).withStyle ("Bold"));
-        g.drawText ("ExpressionSynth", bounds.removeFromTop (26),
-                     juce::Justification::centredLeft);
+        drawLabel (g, "ExpressionSynth", top, Palette::muted, 12.0f);
 
-        g.setColour (juce::Colour (0xff9a9aa8));
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawText ("Articulation: " + processor.getActiveProfileName(),
-                     bounds.removeFromTop (20), juce::Justification::centredLeft);
+        const int note = proc.getActiveNoteForDisplay();
+        const bool on = note >= 0;
 
-        bounds.removeFromTop (10);
+        g.setColour (on ? Palette::conf : juce::Colour (0xff4a4f5c));
+        g.setFont (juce::FontOptions (21.0f).withStyle ("Bold"));
+        g.drawText (on ? noteName (note) : "--", top.removeFromRight (150),
+                     juce::Justification::centredRight);
 
-        // --- Note state, the single most useful line while testing ---
-        g.setFont (juce::FontOptions (15.0f).withStyle ("Bold"));
-        if (activeNote >= 0)
-        {
-            g.setColour (juce::Colour (0xff6ee7a0));
-            g.drawText ("NOTE ON   " + midiNoteName (activeNote)
-                          + "   (" + juce::String (activeNote) + ")",
-                         bounds.removeFromTop (24), juce::Justification::centredLeft);
-        }
-        else
-        {
-            g.setColour (juce::Colour (0xff6a6a78));
-            g.drawText ("- silent -", bounds.removeFromTop (24),
-                         juce::Justification::centredLeft);
-        }
+        inner.removeFromTop (5);
+        auto bars = inner.removeFromTop (16);
+        const auto f = proc.getFeaturesForDisplay();
 
-        bounds.removeFromTop (8);
+        drawStripMeter (g, bars.removeFromLeft (bars.getWidth() / 2 - 7),
+                         "Amplitude", f.amplitude, Palette::amp);
+        bars.removeFromLeft (14);
+        drawStripMeter (g, bars, "Confidence", f.pitchConfidence,
+                         f.pitchConfidence >= 0.5f ? Palette::conf : Palette::confLow);
+    }
 
-        // --- Feature meters ---
-        drawMeter (g, bounds.removeFromTop (30), "Amplitude", features.amplitude,
-                    juce::Colour (0xff5aa9e6));
-        drawMeter (g, bounds.removeFromTop (30), "Confidence", features.pitchConfidence,
-                    features.pitchConfidence >= 0.5f ? juce::Colour (0xff6ee7a0)
-                                                      : juce::Colour (0xffe6a15a));
-        drawMeter (g, bounds.removeFromTop (30), "Onset", features.onsetStrength,
-                    juce::Colour (0xffe65a8b));
-        drawMeter (g, bounds.removeFromTop (30), "Brightness", features.spectralCentroid,
-                    juce::Colour (0xffb98ae6));
-        drawMeter (g, bounds.removeFromTop (30), "Noisiness", features.spectralFlatness,
-                    juce::Colour (0xff8a8ae6));
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        r.removeFromTop (stripHeight);
 
-        // --- Detected pitch in Hz, useful for spotting octave errors ---
-        bounds.removeFromTop (6);
-        g.setColour (juce::Colour (0xff9a9aa8));
-        g.setFont (juce::FontOptions (13.0f));
-        const juce::String pitchText = features.pitchHz > 0.0f
-            ? juce::String (features.pitchHz, 1) + " Hz"
-            : juce::String ("--");
-        g.drawText ("Detected pitch: " + pitchText, bounds.removeFromTop (20),
-                     juce::Justification::centredLeft);
+        tabs.setBounds (r.removeFromTop (36).reduced (12, 3));
+
+        for (auto* v : { &detectView, &synthView, &matrixView })
+            v->setBounds (r);
+
+        detect.setSize (r.getWidth() - 10, DetectPane::contentHeight);
+        synth.setSize  (r.getWidth() - 10, SynthPane::contentHeight);
+        matrix.setSize (r.getWidth() - 10, MatrixPane::contentHeight);
     }
 
 private:
-    void timerCallback() override { repaint(); }
+    static constexpr int stripHeight = 64;
 
-    static juce::String midiNoteName (int note)
+    void showPane (int index)
     {
-        static const char* names[] = { "C", "C#", "D", "D#", "E", "F",
-                                        "F#", "G", "G#", "A", "A#", "B" };
+        detectView.setVisible (index == 0);
+        synthView.setVisible (index == 1);
+        matrixView.setVisible (index == 2);
+        current = index;
+    }
+
+    void timerCallback() override
+    {
+        repaint (getLocalBounds().removeFromTop (stripHeight));
+
+        if (current == 0) detect.refresh();
+        else if (current == 1) synth.refresh();
+    }
+
+    static void drawStripMeter (juce::Graphics& g, juce::Rectangle<int> area,
+                                 const juce::String& label, float value, juce::Colour colour)
+    {
+        drawLabel (g, label, area.removeFromTop (10), Palette::muted, 9.0f);
+        area.removeFromTop (3);
+
+        auto bar = area.removeFromTop (3).toFloat();
+        g.setColour (juce::Colour (0xff111318));
+        g.fillRoundedRectangle (bar, 1.5f);
+        g.setColour (colour);
+        g.fillRoundedRectangle (bar.withWidth (juce::jmax (1.0f, bar.getWidth() * value)), 1.5f);
+    }
+
+    static juce::String noteName (int note)
+    {
+        static const char* names[] = { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
         return juce::String (names[note % 12]) + juce::String (note / 12 - 1);
     }
 
-    void drawMeter (juce::Graphics& g, juce::Rectangle<int> area,
-                     const juce::String& label, float value, juce::Colour colour)
-    {
-        area = area.reduced (0, 4);
-        auto labelArea = area.removeFromLeft (86);
+    ExpressionSynthProcessor& proc;
+    SegmentedControl tabs;
 
-        g.setColour (juce::Colour (0xff9a9aa8));
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText (label, labelArea, juce::Justification::centredLeft);
+    DetectPane detect;
+    SynthPane synth;
+    MatrixPane matrix;
 
-        auto valueArea = area.removeFromRight (44);
-        g.drawText (juce::String (value, 2), valueArea, juce::Justification::centredRight);
-
-        auto barArea = area.reduced (4, 5);
-        g.setColour (juce::Colour (0xff2e2e36));
-        g.fillRoundedRectangle (barArea.toFloat(), 3.0f);
-
-        const float clamped = juce::jlimit (0.0f, 1.0f, value);
-        if (clamped > 0.0f)
-        {
-            auto filled = barArea.toFloat().withWidth (barArea.getWidth() * clamped);
-            g.setColour (colour);
-            g.fillRoundedRectangle (filled, 3.0f);
-        }
-    }
-
-    ExpressionSynthProcessor& processor;
+    juce::Viewport detectView, synthView, matrixView;
+    int current = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ExpressionSynthEditor)
 };

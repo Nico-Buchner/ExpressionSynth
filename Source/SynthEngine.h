@@ -98,6 +98,7 @@ public:
     static constexpr auto onsetThresholdParamID     = "artOnsetThreshold";
     static constexpr auto releaseThresholdParamID   = "artReleaseThreshold";
     static constexpr auto retriggerSensParamID      = "artRetriggerSens";
+    static constexpr auto confidenceGateParamID     = "artConfidenceGate";
     static constexpr auto pitchStabilityParamID     = "artPitchStability";
     static constexpr auto glideModeParamID          = "artGlideMode";
     static constexpr auto bendRangeParamID          = "artBendRange";

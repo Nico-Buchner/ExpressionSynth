@@ -249,6 +249,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
         juce::ParameterID { retriggerSensParamID, 1 }, "Retrigger Threshold",
         juce::NormalisableRange<float> (0.05f, 1.0f), 0.30f));
 
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { confidenceGateParamID, 1 }, "Confidence Gate",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
     params.push_back (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { pitchStabilityParamID, 1 }, "Pitch Stability (blocks)", 1, 12, 3));
 

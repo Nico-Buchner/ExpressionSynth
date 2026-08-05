@@ -15,6 +15,7 @@ ExpressionSynthProcessor::ExpressionSynthProcessor()
                        SynthEngine::onsetThresholdParamID,
                        SynthEngine::releaseThresholdParamID,
                        SynthEngine::retriggerSensParamID,
+                       SynthEngine::confidenceGateParamID,
                        SynthEngine::pitchStabilityParamID,
                        SynthEngine::glideModeParamID,
                        SynthEngine::bendRangeParamID })
@@ -29,6 +30,7 @@ ExpressionSynthProcessor::~ExpressionSynthProcessor()
                        SynthEngine::onsetThresholdParamID,
                        SynthEngine::releaseThresholdParamID,
                        SynthEngine::retriggerSensParamID,
+                       SynthEngine::confidenceGateParamID,
                        SynthEngine::pitchStabilityParamID,
                        SynthEngine::glideModeParamID,
                        SynthEngine::bendRangeParamID })
@@ -64,6 +66,7 @@ void ExpressionSynthProcessor::refreshArticulationProfile()
     profile.onsetAmplitudeThreshold   = apvts.getRawParameterValue (SynthEngine::onsetThresholdParamID)->load();
     profile.releaseAmplitudeThreshold = apvts.getRawParameterValue (SynthEngine::releaseThresholdParamID)->load();
     profile.onsetRetriggerThreshold   = apvts.getRawParameterValue (SynthEngine::retriggerSensParamID)->load();
+    profile.minPitchConfidence        = apvts.getRawParameterValue (SynthEngine::confidenceGateParamID)->load();
     profile.stableBlocksRequiredForRetrigger = (int) apvts.getRawParameterValue (SynthEngine::pitchStabilityParamID)->load();
     profile.bendRangeSemitones        = apvts.getRawParameterValue (SynthEngine::bendRangeParamID)->load();
     profile.pitchMode = apvts.getRawParameterValue (SynthEngine::glideModeParamID)->load() > 0.5f
