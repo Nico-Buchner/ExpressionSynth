@@ -39,7 +39,7 @@ public:
 
     static void addParameters (std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params);
 
-    void prepare (double sampleRate, int blockSize, int numChannels);
+    void prepare (double sampleRate, int blockSize, int channels);
     void reset();
 
     void process (juce::AudioBuffer<float>& buffer,
@@ -85,8 +85,9 @@ private:
 
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delayLine { 96000 };
 
-    juce::dsp::Reverb reverb;
-    juce::dsp::Reverb::Parameters reverbParams;
-
-    juce::AudioBuffer<float> dryBuffer;
+    // juce::Reverb, not juce::dsp::Reverb. The dsp wrapper takes a
+    // ProcessContext; this one exposes setSampleRate and processStereo,
+    // which is what the per-block call below wants.
+    juce::Reverb reverb;
+    juce::Reverb::Parameters reverbParams;
 };

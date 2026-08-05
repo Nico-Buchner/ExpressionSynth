@@ -52,7 +52,6 @@ void EffectsChain::prepare (double newSampleRate, int blockSize, int channels)
     delayLine.setMaximumDelayInSamples ((int) (sampleRate * 2.1));
 
     reverb.setSampleRate (sampleRate);
-    dryBuffer.setSize (numChannels, juce::jmax (1, blockSize));
 
     for (auto* s : { &driveAmount, &driveMix, &driveLevel,
                       &delayMix, &delayFeedback, &reverbMix })
