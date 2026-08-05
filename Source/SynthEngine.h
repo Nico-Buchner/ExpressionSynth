@@ -34,12 +34,14 @@ struct VoiceParams
     float spread = 0.0f;
     juce::ADSR::Parameters adsr { 0.01f, 0.15f, 0.8f, 0.3f };
 
-    // --- describe the DETECTED note: audio-triggered voices only ---
-    // A MIDI chord should sound at its own velocity rather than being
-    // gated by the guitar's envelope, and should not inherit the bend
-    // belonging to a note the player did not play.
-    float audioGain = 0.8f;
-    float midiGain = 0.8f;
+    // --- describe the DETECTED note ---
+    // Two gains, because not every sound source wants the input's
+    // envelope applied to it. An audio-triggered note does: that envelope
+    // IS the note. A keyboard note supplies its own velocity, and the
+    // sync voice runs its own per-sample follower, so applying it to
+    // either would either silence them or square the envelope.
+    float envelopedGain = 0.8f;   // level x input amplitude
+    float plainGain = 0.8f;       // level alone
     float pitchBendSemitones = 0.0f;
 };
 

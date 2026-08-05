@@ -113,7 +113,7 @@ void SynthVoice::updateFromParams (const VoiceParams& p)
     // envelope IS the note. MIDI voices would be silenced by it whenever
     // the instrument was quiet, so they use the plain level instead.
     outputGain.setTargetValue (juce::jlimit (0.0f, 1.0f,
-                                              audioTriggered ? p.audioGain : p.midiGain));
+                                              audioTriggered ? p.envelopedGain : p.plainGain));
 }
 
 void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples)
@@ -237,7 +237,11 @@ void SyncVoice::setParams (const VoiceParams& p, float ratio, float envReleaseMs
     filter.setResonance (juce::jlimit (0.1f, 10.0f, p.resonance));
 
     syncRatio = juce::jlimit (0.5f, 8.0f, ratio);
-    gain = p.gain;
+
+    // Plain level, not the enveloped one: render() applies its own
+    // per-sample follower, and taking the modulated gain here would
+    // square the input envelope.
+    gain = p.plainGain;
 
     detector.setHysteresis (hysteresis);
     envRelease = std::exp (-1.0f / (float) (juce::jmax (0.005f, envReleaseMs * 0.001f) * sampleRate));
@@ -506,8 +510,8 @@ VoiceParams SynthEngine::gatherParams (juce::AudioProcessorValueTreeState& param
     vp.spread      = params.getRawParameterValue (spreadParamID)->load();
 
     const float level = params.getRawParameterValue (ampLevelParamID)->load();
-    vp.audioGain = level * modulation.amplitude.load();
-    vp.midiGain = level;
+    vp.envelopedGain = level * modulation.amplitude.load();
+    vp.plainGain = level;
 
     vp.adsr.attack  = params.getRawParameterValue (attackParamID)->load()  * 0.001f;
     vp.adsr.decay   = params.getRawParameterValue (decayParamID)->load()   * 0.001f;
