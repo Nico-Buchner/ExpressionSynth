@@ -60,6 +60,7 @@ target_sources(ExpressionSynth PRIVATE
     Source/ExpressionMapper.cpp
     Source/ArticulationAnalyser.cpp
     Source/Arpeggiator.cpp
+    Source/EffectsChain.cpp
     Source/PitchToMidiConverter.cpp
     Source/SynthEngine.cpp
 )
