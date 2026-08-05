@@ -20,7 +20,10 @@ ExpressionSynthProcessor::ExpressionSynthProcessor()
                        SynthEngine::glideModeParamID,
                        SynthEngine::bendRangeParamID,
                        SynthEngine::adaptiveParamID,
-                       SynthEngine::adaptRateParamID })
+                       SynthEngine::adaptRateParamID,
+                       SynthEngine::pitchMinParamID,
+                       SynthEngine::pitchMaxParamID,
+                       SynthEngine::syncModeParamID })
         apvts.addParameterListener (id, this);
 
     refreshArticulationProfile();
@@ -37,7 +40,10 @@ ExpressionSynthProcessor::~ExpressionSynthProcessor()
                        SynthEngine::glideModeParamID,
                        SynthEngine::bendRangeParamID,
                        SynthEngine::adaptiveParamID,
-                       SynthEngine::adaptRateParamID })
+                       SynthEngine::adaptRateParamID,
+                       SynthEngine::pitchMinParamID,
+                       SynthEngine::pitchMaxParamID,
+                       SynthEngine::syncModeParamID })
         apvts.removeParameterListener (id, this);
 
     cancelPendingUpdate();
@@ -60,6 +66,10 @@ void ExpressionSynthProcessor::parameterChanged (const juce::String& paramID, fl
 
 void ExpressionSynthProcessor::refreshArticulationProfile()
 {
+    featureExtractor.setPitchRange (
+        apvts.getRawParameterValue (SynthEngine::pitchMinParamID)->load(),
+        apvts.getRawParameterValue (SynthEngine::pitchMaxParamID)->load());
+
     adaptiveActive.store (apvts.getRawParameterValue (SynthEngine::adaptiveParamID)->load() > 0.5f);
     articulationAnalyser.setConvergenceNotes (
         apvts.getRawParameterValue (SynthEngine::adaptRateParamID)->load());
@@ -228,11 +238,12 @@ void ExpressionSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     pitchBendSmoother.skip (juce::jmax (0, buffer.getNumSamples() - 1));
     modulation.pitchBendSemitones.store (pitchBendSmoother.getNextValue());
 
-    // 6. Clear the buffer (input audio itself isn't passed through -
-    //    this plugin replaces it with the synth) and render using the
-    //    generated notes.
+    // 6. Render. The input is replaced, not passed through - but sync
+    //    mode reads the mono sum, so the analysis buffer is handed over
+    //    rather than the output buffer being cleared first.
+    const float* monoInput = analysisBuffer.getReadPointer (0);
     buffer.clear();
-    synthEngine.renderNextBlock (buffer, generatedMidi, apvts, modulation);
+    synthEngine.renderNextBlock (buffer, generatedMidi, apvts, modulation, monoInput);
 }
 
 juce::AudioProcessorEditor* ExpressionSynthProcessor::createEditor()

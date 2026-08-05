@@ -9,6 +9,9 @@ void FeatureExtractor::prepare (double newSampleRate, int newBlockSize)
     setEnvelopeTimes (5.0f, 80.0f);
     setPitchRange (75.0f, 2000.0f);
 
+    // getLatencyMs depends on the range, so it is only meaningful after
+    // setPitchRange has run.
+
     pitchScratch.setSize (1, pitchBufferSize);
     yinDiff.assign (pitchBufferSize / 2, 0.0f);
     yinCmnd.assign (pitchBufferSize / 2, 0.0f);
@@ -58,6 +61,18 @@ void FeatureExtractor::setPitchRange (float minHz, float maxHz)
 
     tauMin = juce::jlimit (2, hardLimit - 1, (int) (sampleRate / maxHz));
     tauMax = juce::jlimit (tauMin + 1, hardLimit, (int) (sampleRate / minHz) + 1);
+
+    // The reference frame is sized to the longest lag rather than fixed,
+    // which is YIN's conventional configuration and gives an analysis
+    // span of exactly two periods of the lowest detectable note - the
+    // theoretical minimum. A fixed frame is oversized for every range
+    // narrower than the widest, and the excess is latency for nothing.
+    windowLen = juce::jlimit (32, pitchBufferSize - tauMax, tauMax);
+
+    // Analyse the NEWEST samples. The buffer holds 2048 with the most
+    // recent at the end, so reading from index 0 would analyse audio that
+    // is already old and add latency with no benefit.
+    analysisOffset = juce::jmax (0, pitchBufferSize - (windowLen + tauMax));
 }
 
 void FeatureExtractor::reset()
@@ -109,16 +124,16 @@ void FeatureExtractor::updatePitch (const juce::AudioBuffer<float>& input)
         std::copy (in, in + numNew, scratch + (pitchBufferSize - numNew));
     }
 
-    const int windowLen = pitchBufferSize / 2;
+    const float* frame = scratch + analysisOffset;
 
-    // Step 1: difference function, only over the tau range implied by
-    // the configured min/max frequency.
+    // Step 1: difference function, over the lag range implied by the
+    // configured frequency range, on the most recent audio.
     for (int tau = 1; tau < tauMax; ++tau)
     {
         float sum = 0.0f;
         for (int j = 0; j < windowLen; ++j)
         {
-            const float delta = scratch[j] - scratch[j + tau];
+            const float delta = frame[j] - frame[j + tau];
             sum += delta * delta;
         }
         yinDiff[(size_t) tau] = sum;

@@ -39,6 +39,12 @@ public:
         phase = offset - std::floor (offset);
     }
 
+    // Hard sync: the input waveform resets the cycle. The discontinuity
+    // this creates IS the sound - smoothing it away would remove the
+    // character - so it is left sharp. It does alias, as hardware sync
+    // does; see the manual.
+    void sync() { phase = 0.0f; }
+
     void setFrequency (float hz)
     {
         hz = juce::jlimit (0.0f, (float) sampleRate * 0.45f, hz);

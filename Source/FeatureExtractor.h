@@ -26,6 +26,14 @@ public:
     // most expensive thing in the plugin.
     void setPitchRange (float minHz, float maxHz);
 
+    // Analysis span in milliseconds - the dominant term in how long the
+    // plugin takes to respond to a note. Shown in the interface so the
+    // cost of a wide pitch range is visible rather than hidden.
+    float getAnalysisLatencyMs() const noexcept
+    {
+        return 1000.0f * (float) (windowLen + tauMax) / (float) sampleRate;
+    }
+
     void process (const juce::AudioBuffer<float>& input);
 
     const Features& getLatestFeatures() const noexcept { return current; }
@@ -57,6 +65,8 @@ private:
 
     int tauMin = 2;
     int tauMax = pitchBufferSize / 2;
+    int windowLen = pitchBufferSize / 2;
+    int analysisOffset = 0;
 
     void updateSpectrumDisplay (const float* magnitudes, int numBins);
 

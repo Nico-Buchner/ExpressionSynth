@@ -152,6 +152,151 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
     }
 }
 
+// ---------- SyncVoice ----------
+
+void SyncVoice::prepare (const juce::dsp::ProcessSpec& spec)
+{
+    sampleRate = spec.sampleRate;
+
+    detector.prepare (spec.sampleRate);
+
+    for (auto& o : oscs)
+        o.prepare (spec.sampleRate);
+
+    juce::dsp::ProcessSpec stereo = spec;
+    stereo.numChannels = 2;
+    filter.prepare (stereo);
+    filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+
+    // 1 ms attack: fast enough that the output opens with the note rather
+    // than after it.
+    envAttack = std::exp (-1.0f / (float) (0.001 * spec.sampleRate));
+    envRelease = std::exp (-1.0f / (float) (0.080 * spec.sampleRate));
+
+    isPrepared = true;
+    reset();
+}
+
+void SyncVoice::reset()
+{
+    detector.reset();
+    envelope = 0.0f;
+    for (int u = 0; u < maxUnison; ++u)
+    {
+        oscs[u].reset();
+        oscs[u].setPhaseOffset ((float) u / (float) maxUnison);
+    }
+}
+
+void SyncVoice::setParams (const VoiceParams& p, float ratio, float envReleaseMs, float hysteresis)
+{
+    if (! isPrepared)
+        return;
+
+    if (p.unisonCount != activeUnison
+        || std::abs (p.detuneCents - cachedDetune) > 0.01f
+        || std::abs (p.spread - cachedSpread) > 0.001f)
+    {
+        activeUnison = juce::jlimit (1, maxUnison, p.unisonCount);
+
+        for (int u = 0; u < activeUnison; ++u)
+        {
+            const float pos = activeUnison > 1
+                ? (2.0f * (float) u / (float) (activeUnison - 1)) - 1.0f : 0.0f;
+
+            detuneRatio[u] = std::pow (2.0f, (pos * p.detuneCents) / 1200.0f);
+
+            const float angle = (pos * p.spread + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+            panL[u] = std::cos (angle);
+            panR[u] = std::sin (angle);
+        }
+
+        unisonScale = 1.0f / std::sqrt ((float) activeUnison);
+        cachedDetune = p.detuneCents;
+        cachedSpread = p.spread;
+    }
+
+    for (int u = 0; u < activeUnison; ++u)
+        oscs[u].setMorph (p.morph);
+
+    filter.setCutoffFrequency (juce::jlimit (20.0f, 20000.0f, p.cutoffHz));
+    filter.setResonance (juce::jlimit (0.1f, 10.0f, p.resonance));
+
+    syncRatio = juce::jlimit (0.5f, 8.0f, ratio);
+    gain = p.gain;
+
+    detector.setHysteresis (hysteresis);
+    envRelease = std::exp (-1.0f / (float) (juce::jmax (0.005f, envReleaseMs * 0.001f) * sampleRate));
+}
+
+void SyncVoice::render (juce::AudioBuffer<float>& output, const float* monoInput, int numSamples)
+{
+    if (! isPrepared || monoInput == nullptr)
+        return;
+
+    const int numChannels = output.getNumChannels();
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float in = monoInput[i];
+
+        // Sync is evaluated per sample. Quantising a phase reset to a
+        // block boundary would put it up to 11 ms late and destroy the
+        // pitch relationship this mode exists to preserve.
+        if (detector.process (in))
+        {
+            const float tracked = detector.getFrequency();
+
+            if (tracked > 0.0f)
+            {
+                // Free-running frequency above the sync frequency is what
+                // produces the classic sync timbre: the reset truncates a
+                // faster cycle, and the ratio sets how bright that is.
+                for (int u = 0; u < activeUnison; ++u)
+                    oscs[u].setFrequency (juce::jlimit (20.0f, 20000.0f,
+                                                         tracked * syncRatio * detuneRatio[u]));
+            }
+
+            for (int u = 0; u < activeUnison; ++u)
+                oscs[u].sync();
+        }
+
+        const float rectified = std::abs (in);
+        const float coeff = rectified > envelope ? envAttack : envRelease;
+        envelope = coeff * envelope + (1.0f - coeff) * rectified;
+
+        float left = 0.0f, right = 0.0f;
+
+        for (int u = 0; u < activeUnison; ++u)
+        {
+            const float sv = oscs[u].processSample();
+            left  += sv * panL[u];
+            right += sv * panR[u];
+        }
+
+        left  = filter.processSample (0, left  * unisonScale);
+        right = filter.processSample (1, right * unisonScale);
+
+        const float vca = juce::jlimit (0.0f, 1.0f, envelope * 2.0f) * gain;
+        left *= vca;
+        right *= vca;
+
+        if (numChannels >= 2)
+        {
+            output.setSample (0, i, left);
+            output.setSample (1, i, right);
+            for (int ch = 2; ch < numChannels; ++ch)
+                output.setSample (ch, i, (left + right) * 0.5f);
+        }
+        else if (numChannels == 1)
+        {
+            output.setSample (0, i, (left + right) * 0.5f);
+        }
+    }
+}
+
+// ---------- SynthEngine ----------
+
 void SynthEngine::prepare (double sampleRate, int samplesPerBlock, int numVoices)
 {
     currentSampleRate = sampleRate;
@@ -175,6 +320,8 @@ void SynthEngine::prepare (double sampleRate, int samplesPerBlock, int numVoices
     for (int i = 0; i < synth.getNumVoices(); ++i)
         if (auto* voice = dynamic_cast<SynthVoice*> (synth.getVoice (i)))
             voice->prepare (spec);
+
+    syncVoice.prepare (spec);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameterLayout()
@@ -233,6 +380,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
         juce::ParameterID { ampLevelParamID, 1 }, "Output Level",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f));
 
+    // Narrowing this is the single largest latency reduction available:
+    // the analysis window is two periods of the lowest detectable note,
+    // so raising the floor shortens it proportionally.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { syncModeParamID, 1 }, "Hard Sync", false));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { syncRatioParamID, 1 }, "Sync Ratio",
+        juce::NormalisableRange<float> (0.5f, 8.0f, 0.01f, 0.5f), 1.0f));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { syncSensParamID, 1 }, "Sync Sensitivity",
+        juce::NormalisableRange<float> (0.005f, 0.30f), 0.06f));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { syncReleaseParamID, 1 }, "Sync Release (ms)",
+        juce::NormalisableRange<float> (5.0f, 1000.0f, 1.0f, 0.4f), 80.0f));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { pitchMinParamID, 1 }, "Lowest Note (Hz)",
+        juce::NormalisableRange<float> (40.0f, 500.0f, 1.0f, 0.5f), 75.0f));
+
+    params.push_back (std::make_unique<Param> (
+        juce::ParameterID { pitchMaxParamID, 1 }, "Highest Note (Hz)",
+        juce::NormalisableRange<float> (500.0f, 4000.0f, 1.0f, 0.5f), 2000.0f));
+
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { adaptiveParamID, 1 }, "Adaptive", false));
 
@@ -273,10 +446,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     return { params.begin(), params.end() };
 }
 
-void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
-                                    const juce::MidiBuffer& midi,
-                                    juce::AudioProcessorValueTreeState& params,
-                                    const ModulationState& modulation)
+VoiceParams SynthEngine::gatherParams (juce::AudioProcessorValueTreeState& params,
+                                        const ModulationState& modulation) const
 {
     VoiceParams vp;
 
@@ -313,6 +484,36 @@ void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
     vp.adsr.decay   = params.getRawParameterValue (decayParamID)->load()   * 0.001f;
     vp.adsr.sustain = params.getRawParameterValue (sustainParamID)->load();
     vp.adsr.release = params.getRawParameterValue (releaseParamID)->load() * 0.001f;
+
+    return vp;
+}
+
+void SynthEngine::renderNextBlock (juce::AudioBuffer<float>& buffer,
+                                    const juce::MidiBuffer& midi,
+                                    juce::AudioProcessorValueTreeState& params,
+                                    const ModulationState& modulation,
+                                    const float* monoInput)
+{
+    const auto vp = gatherParams (params, modulation);
+    const bool wantSync = params.getRawParameterValue (syncModeParamID)->load() > 0.5f;
+
+    if (wantSync != syncMode)
+    {
+        syncMode = wantSync;
+        syncVoice.reset();
+        synth.allNotesOff (0, false);
+    }
+
+    if (syncMode)
+    {
+        syncVoice.setParams (vp,
+                              params.getRawParameterValue (syncRatioParamID)->load(),
+                              params.getRawParameterValue (syncReleaseParamID)->load(),
+                              params.getRawParameterValue (syncSensParamID)->load());
+
+        syncVoice.render (buffer, monoInput, buffer.getNumSamples());
+        return;
+    }
 
     for (int i = 0; i < synth.getNumVoices(); ++i)
         if (auto* voice = dynamic_cast<SynthVoice*> (synth.getVoice (i)))

@@ -4,6 +4,7 @@
 #include "ArticulationProfile.h"
 #include "ModulationState.h"
 #include "MorphOscillator.h"
+#include "SyncDetector.h"
 
 class SynthSound : public juce::SynthesiserSound
 {
@@ -73,6 +74,52 @@ private:
     bool isPrepared = false;
 };
 
+// Hard-sync voice. Deliberately not a juce::SynthesiserVoice: there are
+// no note events in sync mode, so there is nothing to allocate voices
+// for. The oscillators run continuously and the input's own envelope
+// opens and closes the output.
+class SyncVoice
+{
+public:
+    void prepare (const juce::dsp::ProcessSpec& spec);
+    void reset();
+
+    void setParams (const VoiceParams& p, float ratio, float envReleaseMs, float hysteresis);
+
+    // Renders straight from the mono input, replacing the buffer.
+    void render (juce::AudioBuffer<float>& output,
+                  const float* monoInput, int numSamples);
+
+    float getTrackedFrequency() const noexcept { return detector.getFrequency(); }
+    bool isLocked() const noexcept { return detector.isLocked(); }
+
+private:
+    static constexpr int maxUnison = 4;
+
+    SyncDetector detector;
+    MorphOscillator oscs[maxUnison];
+    float detuneRatio[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+    float panL[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+    float panR[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+
+    juce::dsp::StateVariableTPTFilter<float> filter;
+
+    int activeUnison = 1;
+    float unisonScale = 1.0f;
+    float cachedDetune = -1.0f, cachedSpread = -1.0f;
+
+    float syncRatio = 1.0f;
+    float gain = 0.8f;
+
+    // Fast per-sample follower. The block-rate envelope used elsewhere
+    // would undo the point of running sample-accurate sync.
+    float envelope = 0.0f;
+    float envAttack = 0.0f, envRelease = 0.0f;
+
+    double sampleRate = 44100.0;
+    bool isPrepared = false;
+};
+
 class SynthEngine
 {
 public:
@@ -104,15 +151,31 @@ public:
     static constexpr auto bendRangeParamID          = "artBendRange";
     static constexpr auto adaptiveParamID           = "artAdaptive";
     static constexpr auto adaptRateParamID          = "artAdaptRate";
+    static constexpr auto syncModeParamID           = "engSyncMode";
+    static constexpr auto syncRatioParamID          = "engSyncRatio";
+    static constexpr auto syncSensParamID           = "engSyncSens";
+    static constexpr auto syncReleaseParamID        = "engSyncRelease";
+    static constexpr auto pitchMinParamID           = "detPitchMin";
+    static constexpr auto pitchMaxParamID           = "detPitchMax";
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void renderNextBlock (juce::AudioBuffer<float>& buffer,
                            const juce::MidiBuffer& midi,
                            juce::AudioProcessorValueTreeState& params,
-                           const ModulationState& modulation);
+                           const ModulationState& modulation,
+                           const float* monoInput);
+
+    bool isSyncMode() const noexcept { return syncMode; }
+    float getSyncFrequency() const noexcept { return syncVoice.getTrackedFrequency(); }
+    bool isSyncLocked() const noexcept { return syncVoice.isLocked(); }
 
 private:
+    VoiceParams gatherParams (juce::AudioProcessorValueTreeState& params,
+                               const ModulationState& modulation) const;
+
     juce::Synthesiser synth;
+    SyncVoice syncVoice;
+    bool syncMode = false;
     double currentSampleRate = 44100.0;
 };

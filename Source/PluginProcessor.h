@@ -63,6 +63,10 @@ public:
     const ExpressionMapper& getMapper() const { return expressionMapper; }
     const ArticulationAnalyser& getAnalyser() const { return articulationAnalyser; }
     bool isAdaptive() const { return adaptiveActive.load(); }
+    float getAnalysisLatencyMs() const { return featureExtractor.getAnalysisLatencyMs(); }
+    bool isSyncMode() const { return synthEngine.isSyncMode(); }
+    float getSyncFrequency() const { return synthEngine.getSyncFrequency(); }
+    bool isSyncLocked() const { return synthEngine.isSyncLocked(); }
 
 private:
     void parameterChanged (const juce::String& paramID, float newValue) override;
