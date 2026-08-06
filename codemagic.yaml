@@ -114,8 +114,8 @@ workflows:
             /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$EXT/Info.plist"
           done
           echo -n "  App Group        : "
-          grep -o 'group\.[a-zA-Z0-9._-]*' "$APP/Info.plist" 2>/dev/null | head -1 \
-            || echo "(check the .entitlements JUCE generated)"
+          grep -rho 'group\.[a-zA-Z0-9._-]*' build-ios --include="*.entitlements" \
+            2>/dev/null | head -1 || echo "(none found)"
           echo "=================================================="
 
     artifacts:
@@ -149,7 +149,7 @@ workflows:
         JUCE_VERSION: *juce_version
         IOS_DEPLOYMENT_TARGET: *ios_target
         BUNDLE_ID_CONTAINER: "me.buchner.expressionsynth"
-        BUNDLE_ID_AUV3: "me.buchner.expressionsynth.auv3"
+        BUNDLE_ID_AUV3: "me.buchner.expressionsynth.expressionsynthAUv3"
         APP_STORE_APPLE_ID: "6798476846"
       groups:
         - appstore_credentials   # must contain DEVELOPMENT_TEAM
