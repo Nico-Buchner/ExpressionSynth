@@ -178,8 +178,15 @@ workflows:
 
       - name: Configure (CMake -> Xcode project)
         script: |
+          # Identical to the compile-check workflow on purpose. These two
+          # steps were previously written out separately, only one was
+          # corrected when the platform flags were fixed, and the other
+          # carried the fault silently until it first ran.
+          rm -rf build-ios
           cmake -B build-ios -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
 
       - name: Verify the project actually targets iOS
