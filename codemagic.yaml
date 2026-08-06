@@ -286,6 +286,36 @@ workflows:
             --scheme "ExpressionSynth_Standalone" \
             --archive-flags "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 
+      - name: Validate the ipa before it is uploaded
+        script: |
+          # Apple validates at UPLOAD, which happens after every script
+          # has run - so a plist fault costs the entire signing round trip
+          # before it surfaces. This inspects the archive that is about to
+          # be sent, which is the only thing that actually matters.
+          IPA=$(find build -name "*.ipa" | head -1)
+          echo "inspecting: $IPA"
+          rm -rf /tmp/ipacheck && mkdir -p /tmp/ipacheck
+          (cd /tmp/ipacheck && unzip -oq "$OLDPWD/$IPA")
+          PLIST=$(find /tmp/ipacheck/Payload -maxdepth 2 -name "Info.plist" | head -1)
+          FAIL=0
+
+          FULLSCREEN=$(/usr/libexec/PlistBuddy -c "Print :UIRequiresFullScreen" "$PLIST" 2>/dev/null || echo "false")
+          echo "UIRequiresFullScreen: $FULLSCREEN"
+
+          for KEY in "UISupportedInterfaceOrientations" "UISupportedInterfaceOrientations~ipad"; do
+            COUNT=$(/usr/libexec/PlistBuddy -c "Print :$KEY" "$PLIST" 2>/dev/null | grep -c UIInterface || true)
+            echo "$KEY: $COUNT"
+            if [ "$FULLSCREEN" != "true" ] && [ "$COUNT" -gt 0 ] && [ "$COUNT" -lt 4 ]; then
+              echo "  ERROR: iPad multitasking needs all four orientations."
+              FAIL=1
+            fi
+          done
+
+          echo "version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null) build $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" 2>/dev/null)"
+
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "ipa looks acceptable for upload."
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log

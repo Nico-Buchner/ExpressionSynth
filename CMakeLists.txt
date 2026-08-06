@@ -54,7 +54,15 @@ juce_add_plugin(ExpressionSynth
     APP_GROUPS_ENABLED TRUE
     APP_GROUP_IDS "${APP_GROUP_ID}"
 
-    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait
+    # BOTH keys need all four orientations. An app that does not require
+    # full screen must support every orientation for iPad multitasking,
+    # and App Store Connect rejects the upload otherwise - at the upload
+    # stage, after signing and archiving have already succeeded.
+    #
+    # The iPhone key matters even for an iPad-targeted app, because it is
+    # UISupportedInterfaceOrientations that validation reads.
+    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     REQUIRES_FULL_SCREEN FALSE
 )
 
