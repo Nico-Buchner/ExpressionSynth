@@ -98,13 +98,33 @@ workflows:
                CODE_SIGNING_REQUIRED=NO \
                CODE_SIGN_IDENTITY=""
 
+      - name: Report the bundle identifiers JUCE generated
+        script: |
+          # Read them out of the built bundles rather than assuming. The
+          # extension's identifier is derived by JUCE, and it has to match
+          # what is registered in the developer portal exactly.
+          APP=$(find build-ios -name "*.app" -maxdepth 6 -type d | head -1)
+          echo "=================================================="
+          echo "REGISTER THESE EXACTLY IN THE APPLE PORTAL:"
+          echo "=================================================="
+          echo -n "  container App ID : "
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+          for EXT in "$APP"/PlugIns/*.appex; do
+            echo -n "  extension App ID : "
+            /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$EXT/Info.plist"
+          done
+          echo -n "  App Group        : "
+          grep -o 'group\.[a-zA-Z0-9._-]*' "$APP/Info.plist" 2>/dev/null | head -1 \
+            || echo "(check the .entitlements JUCE generated)"
+          echo "=================================================="
+
     artifacts:
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
       email:
         recipients:
-          - apple@buchner.me   # replace; get build results without watching
+          - your.email@example.com   # replace; get build results without watching
         notify:
           success: true
           failure: true
