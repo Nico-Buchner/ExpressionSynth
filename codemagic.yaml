@@ -323,4 +323,10 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+
+        # False on purpose. True submits for EXTERNAL beta review, which
+        # requires a feedback email, a review contact with phone number,
+        # and an Apple review taking days. None of that is needed to test
+        # it yourself: the build still uploads and processes, and becomes
+        # available to internal testers immediately.
+        submit_to_testflight: false
