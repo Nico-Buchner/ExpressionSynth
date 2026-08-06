@@ -1,7 +1,7 @@
 # Two workflows, deliberately separate.
 #
 # Run `compile-check` FIRST. It needs no Apple Developer account, no
-# certificates, and no App Store Connect setup — it only answers "does
+# certificates, and no App Store Connect setup - it only answers "does
 # this C++ actually build for iOS?". Getting that green before touching
 # signing removes most of the variables from the harder problem, and
 # costs a fraction of the build minutes to iterate on.
@@ -15,7 +15,7 @@ definitions:
 workflows:
 
   # ---------------------------------------------------------------
-  # 1. Compile check — no signing, no Apple account needed
+  # 1. Compile check - no signing, no Apple account needed
   # ---------------------------------------------------------------
   compile-check:
     name: Compile Check (unsigned)
@@ -71,7 +71,7 @@ workflows:
             echo "The generated project would build for macOS instead."
             exit 1
           fi
-          echo "OK — project is configured for iOS."
+          echo "OK - project is configured for iOS."
 
       - name: List generated targets and destinations
         script: |
@@ -142,9 +142,11 @@ workflows:
       app_store_connect: codemagic
     environment:
       xcode: latest
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: me.buchner.expressionsynth
+      # No ios_signing block here on purpose. That enables Codemagic's
+      # automatic signing, which runs before any script and only FETCHES
+      # existing profiles - it will not create them. The explicit
+      # fetch-signing-files step below does create them, but never got
+      # the chance while automatic signing was failing first.
       vars:
         JUCE_VERSION: *juce_version
         IOS_DEPLOYMENT_TARGET: *ios_target
@@ -202,15 +204,29 @@ workflows:
 
       - name: Fetch signing files
         script: |
+          set -e
           keychain initialize
-          # Both the container app AND the extension need provisioning
-          # profiles — the extension is a separate signed binary.
+
+          # --create makes the distribution certificate and the profiles
+          # if they are absent, which on a fresh account they are. Both
+          # the container app AND the extension need their own profile:
+          # the extension is a separately signed binary.
           app-store-connect fetch-signing-files "$BUNDLE_ID_CONTAINER" \
             --type IOS_APP_STORE --create
           app-store-connect fetch-signing-files "$BUNDLE_ID_AUV3" \
             --type IOS_APP_STORE --create
+
           keychain add-certificates
           xcode-project use-profiles
+
+      - name: Report what was signed with
+        script: |
+          # If the archive step fails later, this shows whether the
+          # profiles were actually obtained and which IDs they cover.
+          echo "--- provisioning profiles ---"
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "(none)"
+          echo "--- signing identities ---"
+          security find-identity -v -p codesigning 2>/dev/null | head || echo "(none)"
 
       - name: Build and archive
         script: |
