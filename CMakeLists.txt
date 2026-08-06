@@ -30,6 +30,10 @@ juce_add_plugin(ExpressionSynth
     AU_MAIN_TYPE "kAudioUnitType_MusicEffect"
     PRODUCT_NAME "ExpressionSynth"
 
+    # App Store Connect rejects uploads with no icon, so this is required
+    # for TestFlight rather than cosmetic.
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
+
     # iOS only supports AUv3. VST3 will not load and must not be listed
     # here for an iOS build.
     FORMATS AUv3 Standalone

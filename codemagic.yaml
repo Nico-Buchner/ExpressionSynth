@@ -160,6 +160,26 @@ workflows:
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET"
 
+      - name: Verify the project actually targets iOS
+        script: |
+          grep -E "CMAKE_SYSTEM_NAME|CMAKE_OSX_SYSROOT|CMAKE_OSX_ARCHITECTURES" \
+            build-ios/CMakeCache.txt || true
+          if ! grep -q "CMAKE_OSX_SYSROOT:.*iphoneos" build-ios/CMakeCache.txt; then
+            echo "ERROR: CMake did not configure for iOS."
+            exit 1
+          fi
+
+      - name: Check the app icon is present
+        script: |
+          # A missing icon fails at upload rather than at build, which
+          # wastes the whole signing run.
+          if [ ! -f Resources/icon.png ]; then
+            echo "ERROR: Resources/icon.png is missing."
+            echo "App Store Connect will reject the upload without it."
+            exit 1
+          fi
+          echo "icon present: $(ls -la Resources/icon.png)"
+
       - name: Fetch signing files
         script: |
           keychain initialize
