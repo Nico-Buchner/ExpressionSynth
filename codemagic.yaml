@@ -139,7 +139,7 @@ workflows:
     integrations:
       # Name of the App Store Connect API key as saved in Codemagic UI
       # (Teams > Integrations > Developer Portal).
-      app_store_connect: codemagic
+      app_store_connect: Codemagic
     environment:
       xcode: latest
       # No ios_signing block here on purpose. That enables Codemagic's
