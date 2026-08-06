@@ -14,12 +14,12 @@ set(DEV_TEAM "$ENV{DEVELOPMENT_TEAM}")
 # must match between the container app and the AUv3 extension. JUCE
 # generates the entitlements for both targets from this - do not also
 # hand-write .entitlements files, they will conflict.
-set(APP_GROUP_ID "group.com.yourname.expressionsynth")
+set(APP_GROUP_ID "group.me.buchner.expressionsynth")
 
 juce_add_plugin(ExpressionSynth
-    COMPANY_NAME "YourName"
-    BUNDLE_ID "com.yourname.expressionsynth"
-    PLUGIN_MANUFACTURER_CODE Manu
+    COMPANY_NAME "Buchner"
+    BUNDLE_ID "me.buchner.expressionsynth"
+    PLUGIN_MANUFACTURER_CODE Buch
     PLUGIN_CODE Exsy
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE

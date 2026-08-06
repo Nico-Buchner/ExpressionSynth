@@ -124,13 +124,13 @@ workflows:
       xcode: latest
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.yourname.expressionsynth
+        bundle_identifier: me.buchner.expressionsynth
       vars:
         JUCE_VERSION: *juce_version
         IOS_DEPLOYMENT_TARGET: *ios_target
-        BUNDLE_ID_CONTAINER: "com.yourname.expressionsynth"
-        BUNDLE_ID_AUV3: "com.yourname.expressionsynth.auv3"
-        APP_STORE_APPLE_ID: "0000000000"   # numeric App ID from App Store Connect
+        BUNDLE_ID_CONTAINER: "me.buchner.expressionsynth"
+        BUNDLE_ID_AUV3: "me.buchner.expressionsynth.auv3"
+        APP_STORE_APPLE_ID: "6798476846"
       groups:
         - appstore_credentials   # must contain DEVELOPMENT_TEAM
     triggering:
