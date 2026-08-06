@@ -104,7 +104,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - your.email@example.com   # replace; get build results without watching
+          - apple@buchner.me   # replace; get build results without watching
         notify:
           success: true
           failure: true
