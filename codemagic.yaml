@@ -169,13 +169,23 @@ workflows:
           git clone --depth 1 --branch "$JUCE_VERSION" \
             https://github.com/juce-framework/JUCE.git JUCE
 
-      - name: Set build number
+      - name: Check the build number
         script: |
-          # App Store Connect rejects a build number it has seen before,
-          # so derive the next one rather than hardcoding.
-          BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0) + 1))
-          echo "Using build number $BUILD_NUMBER"
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+          # Codemagic increments BUILD_NUMBER itself for every build, and
+          # CMakeLists turns it into the patch component of the version.
+          #
+          # The previous approach asked App Store Connect for the last
+          # version and added one, which cannot work: the value comes back
+          # as a dotted string like "0.1.0" and shell arithmetic on that
+          # fails silently, leaving the version unchanged and the upload
+          # rejected as a duplicate.
+          if [ -z "$BUILD_NUMBER" ]; then
+            echo "ERROR: BUILD_NUMBER is not set."
+            echo "Without it the version stays fixed and the upload will be"
+            echo "rejected as a duplicate. Set it in Codemagic, or pass one."
+            exit 1
+          fi
+          echo "build number: $BUILD_NUMBER  ->  version 0.1.$BUILD_NUMBER"
 
       - name: Configure (CMake -> Xcode project)
         script: |
@@ -281,10 +291,13 @@ workflows:
 
       - name: Build and archive
         script: |
+          # No version flag here on purpose. JUCE writes the version into
+          # the Info.plist at configure time, so it comes from CMakeLists
+          # via BUILD_NUMBER; an xcodebuild setting passed at archive time
+          # is simply ignored.
           xcode-project build-ipa \
             --project "build-ios/ExpressionSynth.xcodeproj" \
-            --scheme "ExpressionSynth_Standalone" \
-            --archive-flags "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+            --scheme "ExpressionSynth_Standalone"
 
       - name: Validate the ipa before it is uploaded
         script: |
@@ -311,7 +324,16 @@ workflows:
             fi
           done
 
-          echo "version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null) build $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" 2>/dev/null)"
+          BUNDLE_VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" 2>/dev/null)
+          echo "CFBundleVersion: $BUNDLE_VER"
+
+          # A version that did not pick up the build number would be
+          # rejected at upload, after this whole run has completed.
+          if [ "$BUNDLE_VER" = "0.1.0" ] && [ "$BUILD_NUMBER" != "0" ]; then
+            echo "ERROR: the build number did not reach the bundle version."
+            echo "Expected 0.1.$BUILD_NUMBER, got $BUNDLE_VER."
+            FAIL=1
+          fi
 
           [ "$FAIL" -eq 0 ] || exit 1
           echo "ipa looks acceptable for upload."

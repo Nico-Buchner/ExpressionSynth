@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.22)
-project(ExpressionSynth VERSION 0.1.0)
+
+# App Store Connect refuses an upload whose bundle version it has already
+# seen, so the version has to move every build. JUCE writes
+# CFBundleVersion into the Info.plist from this project version, which
+# means it must be set HERE - an xcodebuild setting like
+# CURRENT_PROJECT_VERSION arrives too late, because the plist JUCE
+# generates contains a literal rather than a reference to it.
+if (DEFINED ENV{BUILD_NUMBER} AND NOT "$ENV{BUILD_NUMBER}" STREQUAL "")
+    set(ES_BUILD "$ENV{BUILD_NUMBER}")
+else()
+    set(ES_BUILD "0")
+endif()
+
+project(ExpressionSynth VERSION 0.1.${ES_BUILD})
+message(STATUS "ExpressionSynth version: ${PROJECT_VERSION}")
 
 add_subdirectory(JUCE)
 
