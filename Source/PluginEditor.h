@@ -290,6 +290,22 @@ public:
         setColour (juce::PopupMenu::highlightedBackgroundColourId, Palette::panel2);
         setColour (juce::PopupMenu::highlightedTextColourId, Palette::bone);
     }
+
+    // Inside an AUv3 the plugin is a view in the host's window, and iOS
+    // will not let the extension open a window of its own. A popup menu
+    // opened as a desktop window therefore never appears in Cubasis,
+    // although the standalone app shows it. Parenting the menu to the
+    // editor keeps it inside the plugin's own view, which works in both.
+    juce::PopupMenu::Options getOptionsForComboBoxPopupMenu (
+            juce::ComboBox& box, juce::Label& label) override
+    {
+        auto opts = juce::LookAndFeel_V4::getOptionsForComboBoxPopupMenu (box, label);
+
+        if (auto* editor = box.findParentComponentOfClass<juce::AudioProcessorEditor>())
+            opts = opts.withParentComponent (editor);
+
+        return opts;
+    }
 };
 
 class ChoiceRow : public juce::Component
