@@ -2,6 +2,7 @@
 #include "ExpressionMapper.h"
 #include "Arpeggiator.h"
 #include "EffectsChain.h"
+#include "ParameterFormat.h"
 
 void SynthVoice::prepare (const juce::dsp::ProcessSpec& spec)
 {
@@ -354,54 +355,67 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { morphParamID, 1 }, "Waveshape",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f,
+        ParameterFormat::floatFmt (ParameterFormat::waveshape)));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { unisonParamID, 1 }, "Unison Voices", 1, 4, 1));
+        juce::ParameterID { unisonParamID, 1 }, "Unison Voices", 1, 4, 1,
+        ParameterFormat::intFmt (ParameterFormat::voices)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { detuneParamID, 1 }, "Unison Detune (cents)",
-        juce::NormalisableRange<float> (0.0f, 50.0f), 12.0f));
+        juce::NormalisableRange<float> (0.0f, 50.0f), 12.0f,
+        ParameterFormat::floatFmt (ParameterFormat::cents)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { spreadParamID, 1 }, "Unison Spread",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.6f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.6f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { cutoffParamID, 1 }, "Filter Cutoff",
-        juce::NormalisableRange<float> (20.0f, 20000.0f, 1.0f, 0.3f), 1200.0f));
+        juce::NormalisableRange<float> (20.0f, 20000.0f, 1.0f, 0.3f), 1200.0f,
+        ParameterFormat::floatFmt (ParameterFormat::cutoffHz)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { resonanceParamID, 1 }, "Filter Resonance",
-        juce::NormalisableRange<float> (0.1f, 10.0f), 0.7f));
+        juce::NormalisableRange<float> (0.1f, 10.0f), 0.7f,
+        ParameterFormat::floatFmt (ParameterFormat::resonanceQ)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { cutoffModDepthParamID, 1 }, "Cutoff Mod Depth (octaves)",
-        juce::NormalisableRange<float> (0.0f, 6.0f), 4.0f));
+        juce::NormalisableRange<float> (0.0f, 6.0f), 4.0f,
+        ParameterFormat::floatFmt (ParameterFormat::octaves)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { morphModDepthParamID, 1 }, "Waveshape Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { attackParamID, 1 }, "Attack (ms)",
-        juce::NormalisableRange<float> (1.0f, 2000.0f, 0.1f, 0.3f), 10.0f));
+        juce::NormalisableRange<float> (1.0f, 2000.0f, 0.1f, 0.3f), 10.0f,
+        ParameterFormat::floatFmt (ParameterFormat::milliseconds)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { decayParamID, 1 }, "Decay (ms)",
-        juce::NormalisableRange<float> (1.0f, 2000.0f, 0.1f, 0.3f), 150.0f));
+        juce::NormalisableRange<float> (1.0f, 2000.0f, 0.1f, 0.3f), 150.0f,
+        ParameterFormat::floatFmt (ParameterFormat::milliseconds)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { sustainParamID, 1 }, "Sustain",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { releaseParamID, 1 }, "Release (ms)",
-        juce::NormalisableRange<float> (1.0f, 4000.0f, 0.1f, 0.3f), 300.0f));
+        juce::NormalisableRange<float> (1.0f, 4000.0f, 0.1f, 0.3f), 300.0f,
+        ParameterFormat::floatFmt (ParameterFormat::milliseconds)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { ampLevelParamID, 1 }, "Output Level",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f,
+        ParameterFormat::floatFmt (ParameterFormat::decibels)));
 
     // Narrowing this is the single largest latency reduction available:
     // the analysis window is two periods of the lowest detectable note,
@@ -413,7 +427,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     // immediately and the note layer arrives underneath it.
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncMixParamID, 1 }, "Sync Mix",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { audioNotesParamID, 1 }, "Audio Notes", true));
@@ -423,30 +438,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncRatioParamID, 1 }, "Sync Ratio",
-        juce::NormalisableRange<float> (0.5f, 8.0f, 0.01f, 0.5f), 1.0f));
+        juce::NormalisableRange<float> (0.5f, 8.0f, 0.01f, 0.5f), 1.0f,
+        ParameterFormat::floatFmt (ParameterFormat::ratioAsInterval)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncSensParamID, 1 }, "Sync Sensitivity",
-        juce::NormalisableRange<float> (0.005f, 0.30f), 0.06f));
+        juce::NormalisableRange<float> (0.005f, 0.30f), 0.06f,
+        ParameterFormat::floatFmt (ParameterFormat::decibels)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { syncReleaseParamID, 1 }, "Sync Release (ms)",
-        juce::NormalisableRange<float> (5.0f, 1000.0f, 1.0f, 0.4f), 80.0f));
+        juce::NormalisableRange<float> (5.0f, 1000.0f, 1.0f, 0.4f), 80.0f,
+        ParameterFormat::floatFmt (ParameterFormat::milliseconds)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { pitchMinParamID, 1 }, "Lowest Note (Hz)",
-        juce::NormalisableRange<float> (40.0f, 500.0f, 1.0f, 0.5f), 75.0f));
+        juce::NormalisableRange<float> (40.0f, 500.0f, 1.0f, 0.5f), 75.0f,
+        ParameterFormat::floatFmt (ParameterFormat::hzWithNote)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { pitchMaxParamID, 1 }, "Highest Note (Hz)",
-        juce::NormalisableRange<float> (500.0f, 4000.0f, 1.0f, 0.5f), 2000.0f));
+        juce::NormalisableRange<float> (500.0f, 4000.0f, 1.0f, 0.5f), 2000.0f,
+        ParameterFormat::floatFmt (ParameterFormat::hzWithNote)));
 
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { adaptiveParamID, 1 }, "Adaptive", false));
 
     params.push_back (std::make_unique<Param> (
-        juce::ParameterID { adaptRateParamID, 1 }, "Adapt Over (notes)",
-        juce::NormalisableRange<float> (1.0f, 32.0f, 1.0f), 4.0f));
+        juce::ParameterID { adaptRateParamID, 1 }, "Adapt Over",
+        juce::NormalisableRange<float> (1.0f, 32.0f, 1.0f), 4.0f,
+        ParameterFormat::floatFmt (ParameterFormat::noteCount)));
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { articulationPresetParamID, 1 }, "Articulation",
@@ -454,29 +475,35 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { onsetThresholdParamID, 1 }, "Onset Threshold",
-        juce::NormalisableRange<float> (0.005f, 0.30f), 0.08f));
+        juce::NormalisableRange<float> (0.005f, 0.30f), 0.08f,
+        ParameterFormat::floatFmt (ParameterFormat::decibels)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { releaseThresholdParamID, 1 }, "Release Threshold",
-        juce::NormalisableRange<float> (0.002f, 0.20f), 0.015f));
+        juce::NormalisableRange<float> (0.002f, 0.20f), 0.015f,
+        ParameterFormat::floatFmt (ParameterFormat::decibels)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { retriggerSensParamID, 1 }, "Retrigger Threshold",
-        juce::NormalisableRange<float> (0.05f, 1.0f), 0.30f));
+        juce::NormalisableRange<float> (0.05f, 1.0f), 0.30f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { confidenceGateParamID, 1 }, "Confidence Gate",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { pitchStabilityParamID, 1 }, "Pitch Stability (blocks)", 1, 12, 3));
+        juce::ParameterID { pitchStabilityParamID, 1 }, "Pitch Stability (blocks)", 1, 12, 3,
+        ParameterFormat::intFmt (ParameterFormat::stabilityBlocks)));
 
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { glideModeParamID, 1 }, "Glide Mode", false));
 
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { bendRangeParamID, 1 }, "Bend Range (semitones)",
-        juce::NormalisableRange<float> (0.5f, 12.0f), 2.0f));
+        juce::NormalisableRange<float> (0.5f, 12.0f), 2.0f,
+        ParameterFormat::floatFmt (ParameterFormat::semitones)));
 
     ExpressionMapper::addParameters (params);
     Arpeggiator::addParameters (params);

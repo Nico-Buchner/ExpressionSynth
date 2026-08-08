@@ -46,7 +46,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds();
-        drawLabel (g, label, r.removeFromLeft (92), Palette::muted, 10.0f);
+        drawLabel (g, label, r.removeFromLeft (labelWidth), Palette::muted, 10.0f);
 
         juce::String text;
         if (auto* p = state.getParameter (paramID))
@@ -54,14 +54,21 @@ public:
 
         g.setColour (juce::Colour (0xff98a0b0));
         g.setFont (juce::FontOptions (11.0f));
-        g.drawText (text, r.removeFromRight (56), juce::Justification::centredRight);
+        g.drawText (text, r.removeFromRight (valueWidth), juce::Justification::centredRight);
     }
 
     void resized() override
     {
-        slider.setBounds (getLocalBounds().withTrimmedLeft (96).withTrimmedRight (60));
+        slider.setBounds (getLocalBounds()
+                            .withTrimmedLeft (labelWidth + 4)
+                            .withTrimmedRight (valueWidth + 4));
     }
 
+    // Values now read musically, which makes them longer: "+12 st
+    // (octave)" needs about twice the room a bare number did. A clipped
+    // value is worse than the number it replaced.
+    static constexpr int labelWidth = 86;
+    static constexpr int valueWidth = 104;
     static constexpr int preferredHeight = 26;
 
 private:
@@ -70,6 +77,183 @@ private:
     juce::Slider slider;
     RowLookAndFeel lnf;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+};
+
+// A choice parameter deserves a menu, not a slider you drag until the
+// right word appears. Dragging works, but it makes the user hunt for a
+// value they can already name.
+class ChoiceLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    ChoiceLookAndFeel()
+    {
+        setColour (juce::ComboBox::backgroundColourId, Palette::well);
+        setColour (juce::ComboBox::textColourId, Palette::bone);
+        setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff23262e));
+        setColour (juce::ComboBox::arrowColourId, Palette::muted);
+        setColour (juce::PopupMenu::backgroundColourId, Palette::panel);
+        setColour (juce::PopupMenu::textColourId, Palette::bone);
+        setColour (juce::PopupMenu::highlightedBackgroundColourId, Palette::panel2);
+        setColour (juce::PopupMenu::highlightedTextColourId, Palette::bone);
+    }
+};
+
+class ChoiceRow : public juce::Component
+{
+public:
+    ChoiceRow (juce::AudioProcessorValueTreeState& s, juce::String id, juce::String labelText)
+        : label (std::move (labelText))
+    {
+        combo.setLookAndFeel (&lnf);
+        combo.setJustificationType (juce::Justification::centredLeft);
+
+        // Options come from the parameter itself, so a name added in the
+        // engine appears here without a second list to keep in step.
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (s.getParameter (id)))
+            combo.addItemList (choice->choices, 1);
+
+        addAndMakeVisible (combo);
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
+                        (s, id, combo);
+    }
+
+    ~ChoiceRow() override { combo.setLookAndFeel (nullptr); }
+
+    void paint (juce::Graphics& g) override
+    {
+        drawLabel (g, label, getLocalBounds().removeFromLeft (ParamRow::labelWidth),
+                    Palette::muted, 10.0f);
+    }
+
+    void resized() override
+    {
+        combo.setBounds (getLocalBounds()
+                            .withTrimmedLeft (ParamRow::labelWidth + 4)
+                            .reduced (0, 2));
+    }
+
+    static constexpr int preferredHeight = 30;
+
+private:
+    juce::String label;
+    juce::ComboBox combo;
+    ChoiceLookAndFeel lnf;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> attachment;
+};
+
+// An on/off parameter gets a switch. As a slider it reads as a
+// continuous control that happens to have two positions.
+class SwitchLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    void drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
+                            bool, bool) override
+    {
+        const bool on = button.getToggleState();
+        auto r = button.getLocalBounds().toFloat()
+                    .withSizeKeepingCentre (38.0f, 21.0f)
+                    .withX (0.0f);
+
+        g.setColour (on ? juce::Colour (0xff2f6b4d) : Palette::well);
+        g.fillRoundedRectangle (r, 10.5f);
+        g.setColour (on ? juce::Colour (0xff3d8a63) : juce::Colour (0xff23262e));
+        g.drawRoundedRectangle (r.reduced (0.5f), 10.5f, 1.0f);
+
+        g.setColour (Palette::bone);
+        g.fillEllipse (r.getX() + (on ? 20.0f : 3.0f), r.getY() + 3.0f, 15.0f, 15.0f);
+    }
+};
+
+class ToggleRow : public juce::Component
+{
+public:
+    ToggleRow (juce::AudioProcessorValueTreeState& s, juce::String id, juce::String labelText)
+        : label (std::move (labelText))
+    {
+        button.setLookAndFeel (&lnf);
+        addAndMakeVisible (button);
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>
+                        (s, id, button);
+    }
+
+    ~ToggleRow() override { button.setLookAndFeel (nullptr); }
+
+    void paint (juce::Graphics& g) override
+    {
+        drawLabel (g, label, getLocalBounds().removeFromLeft (ParamRow::labelWidth),
+                    Palette::muted, 10.0f);
+    }
+
+    void resized() override
+    {
+        button.setBounds (getLocalBounds()
+                            .withTrimmedLeft (ParamRow::labelWidth + 4)
+                            .withWidth (44));
+    }
+
+    static constexpr int preferredHeight = 28;
+
+private:
+    juce::String label;
+    juce::ToggleButton button;
+    SwitchLookAndFeel lnf;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachment;
+};
+
+// Panes hold a mixed list: sliders for continuous values, menus for
+// choices, switches for on/off. A single vector of Components keeps the
+// layout code from having to know which is which.
+struct RowList
+{
+    std::vector<std::unique_ptr<juce::Component>> rows;
+    std::vector<int> heights;
+
+    void addSlider (juce::Component& owner, juce::AudioProcessorValueTreeState& s,
+                     juce::String id, juce::String label)
+    {
+        auto r = std::make_unique<ParamRow> (s, id, label);
+        owner.addAndMakeVisible (*r);
+        heights.push_back (ParamRow::preferredHeight);
+        rows.push_back (std::move (r));
+    }
+
+    void addChoice (juce::Component& owner, juce::AudioProcessorValueTreeState& s,
+                     juce::String id, juce::String label)
+    {
+        auto r = std::make_unique<ChoiceRow> (s, id, label);
+        owner.addAndMakeVisible (*r);
+        heights.push_back (ChoiceRow::preferredHeight);
+        rows.push_back (std::move (r));
+    }
+
+    void addToggle (juce::Component& owner, juce::AudioProcessorValueTreeState& s,
+                     juce::String id, juce::String label)
+    {
+        auto r = std::make_unique<ToggleRow> (s, id, label);
+        owner.addAndMakeVisible (*r);
+        heights.push_back (ToggleRow::preferredHeight);
+        rows.push_back (std::move (r));
+    }
+
+    // Lays out rows [from, to) and returns the height consumed.
+    int place (juce::Rectangle<int>& area, size_t from, size_t to) const
+    {
+        int used = 0;
+        for (size_t i = from; i < to && i < rows.size(); ++i)
+        {
+            rows[i]->setBounds (area.removeFromTop (heights[i]));
+            used += heights[i];
+        }
+        area.removeFromTop (8);
+        return used + 8;
+    }
+
+    int totalHeight() const
+    {
+        int t = 0;
+        for (int h : heights) t += h;
+        return t;
+    }
 };
 
 inline void drawGroupHeader (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area)
@@ -293,7 +477,7 @@ public:
         mode.setBounds (r.removeFromTop (32));
     }
 
-    static constexpr int contentHeight = 620;
+    static constexpr int contentHeight = 680;   // 618 needed, margin for edits
 
 private:
     ExpressionSynthProcessor& proc;
@@ -320,42 +504,37 @@ public:
         auto& s = proc.getParams();
         addAndMakeVisible (scope);
 
-        auto add = [this, &s] (const char* id, const char* label)
-        {
-            auto row = std::make_unique<ParamRow> (s, id, label);
-            addAndMakeVisible (*row);
-            rows.push_back (std::move (row));
-        };
+        rows.addToggle (*this, s, SynthEngine::audioNotesParamID, "Audio notes");
+        rows.addToggle (*this, s, SynthEngine::midiNotesParamID,  "MIDI notes");
 
-        add (SynthEngine::audioNotesParamID,    "Audio notes");
-        add (SynthEngine::midiNotesParamID,     "MIDI notes");
+        rows.addSlider (*this, s, SynthEngine::syncMixParamID,     "Sync mix");
+        rows.addSlider (*this, s, SynthEngine::syncRatioParamID,   "Ratio");
+        rows.addSlider (*this, s, SynthEngine::syncSensParamID,    "Sensitivity");
+        rows.addSlider (*this, s, SynthEngine::syncReleaseParamID, "Release");
 
-        add (SynthEngine::syncMixParamID,       "Sync mix");
-        add (SynthEngine::syncRatioParamID,     "Ratio");
-        add (SynthEngine::syncSensParamID,      "Sensitivity");
-        add (SynthEngine::syncReleaseParamID,   "Release");
+        rows.addSlider (*this, s, SynthEngine::morphParamID,         "Waveshape");
+        rows.addSlider (*this, s, SynthEngine::morphModDepthParamID, "Mod depth");
 
-        add (SynthEngine::morphParamID,         "Waveshape");
-        add (SynthEngine::morphModDepthParamID, "Mod depth");
-        add (SynthEngine::unisonParamID,        "Voices");
-        add (SynthEngine::detuneParamID,        "Detune");
-        add (SynthEngine::spreadParamID,        "Spread");
-        add (SynthEngine::cutoffParamID,        "Cutoff");
-        add (SynthEngine::resonanceParamID,     "Resonance");
-        add (SynthEngine::cutoffModDepthParamID,"Mod depth");
-        add (SynthEngine::attackParamID,        "Attack");
-        add (SynthEngine::decayParamID,         "Decay");
-        add (SynthEngine::sustainParamID,       "Sustain");
-        add (SynthEngine::releaseParamID,       "Release");
-        add (SynthEngine::ampLevelParamID,      "Level");
+        rows.addSlider (*this, s, SynthEngine::unisonParamID, "Voices");
+        rows.addSlider (*this, s, SynthEngine::detuneParamID, "Detune");
+        rows.addSlider (*this, s, SynthEngine::spreadParamID, "Spread");
+
+        rows.addSlider (*this, s, SynthEngine::cutoffParamID,         "Cutoff");
+        rows.addSlider (*this, s, SynthEngine::resonanceParamID,      "Resonance");
+        rows.addSlider (*this, s, SynthEngine::cutoffModDepthParamID, "Mod depth");
+
+        rows.addSlider (*this, s, SynthEngine::attackParamID,  "Attack");
+        rows.addSlider (*this, s, SynthEngine::decayParamID,   "Decay");
+        rows.addSlider (*this, s, SynthEngine::sustainParamID, "Sustain");
+        rows.addSlider (*this, s, SynthEngine::releaseParamID, "Release");
+
+        rows.addSlider (*this, s, SynthEngine::ampLevelParamID, "Level");
     }
 
     void refresh()
     {
         auto& s = proc.getParams();
 
-        // Say plainly what the current mix means, since the two layers
-        // behave so differently that a bare number is not enough.
         const bool audioNotes = s.getRawParameterValue (SynthEngine::audioNotesParamID)->load() > 0.5f;
         const bool midiNotes  = s.getRawParameterValue (SynthEngine::midiNotesParamID)->load() > 0.5f;
 
@@ -418,50 +597,38 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
-        drawLabelSlot (r, "Note sources");
-        place (r, 0, 2);
+        headers.push_back ({ "Note sources", r.removeFromTop (30) });
+        rows.place (r, 0, 2);
         sourceNote = r.removeFromTop (30);
 
-        drawLabelSlot (r, "Sync");
-        place (r, 2, 6);
+        headers.push_back ({ "Sync", r.removeFromTop (30) });
+        rows.place (r, 2, 6);
         syncNote = r.removeFromTop (30);
 
-        drawLabelSlot (r, "Oscillator");
+        headers.push_back ({ "Oscillator", r.removeFromTop (30) });
         scope.setBounds (r.removeFromTop (78));
         r.removeFromTop (8);
-        place (r, 6, 8);
+        rows.place (r, 6, 8);
 
-        drawLabelSlot (r, "Unison");
-        place (r, 8, 11);
+        headers.push_back ({ "Unison", r.removeFromTop (30) });
+        rows.place (r, 8, 11);
 
-        drawLabelSlot (r, "Filter");
-        place (r, 11, 14);
+        headers.push_back ({ "Filter", r.removeFromTop (30) });
+        rows.place (r, 11, 14);
 
-        drawLabelSlot (r, "Envelope");
-        place (r, 14, 18);
+        headers.push_back ({ "Envelope", r.removeFromTop (30) });
+        rows.place (r, 14, 18);
 
-        drawLabelSlot (r, "Output");
-        place (r, 18, 19);
+        headers.push_back ({ "Output", r.removeFromTop (30) });
+        rows.place (r, 18, 19);
     }
 
-    static constexpr int contentHeight = 980;
+    static constexpr int contentHeight = 1010;
 
 private:
-    void drawLabelSlot (juce::Rectangle<int>& r, const juce::String& name)
-    {
-        headers.push_back ({ name, r.removeFromTop (32) });
-    }
-
-    void place (juce::Rectangle<int>& r, size_t from, size_t to)
-    {
-        for (size_t i = from; i < to && i < rows.size(); ++i)
-            rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-        r.removeFromTop (8);
-    }
-
     ExpressionSynthProcessor& proc;
     WaveScope scope;
-    std::vector<std::unique_ptr<ParamRow>> rows;
+    RowList rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> syncNote, sourceNote;
     juce::String syncHint, sourceHint;
@@ -482,22 +649,17 @@ public:
     {
         auto& s = proc.getParams();
 
-        auto add = [this, &s] (juce::String id, juce::String label)
-        {
-            auto row = std::make_unique<ParamRow> (s, id, label);
-            addAndMakeVisible (*row);
-            rows.push_back (std::move (row));
-        };
+        rows.addToggle (*this, s, Arpeggiator::enabledParamID, "Arp");
+        rows.addChoice (*this, s, Arpeggiator::sourceParamID,  "Source");
+        rows.addChoice (*this, s, Arpeggiator::chordParamID,   "Chord");
 
-        add (Arpeggiator::enabledParamID, "Arp");
-        add (Arpeggiator::sourceParamID,  "Source");
-        add (Arpeggiator::chordParamID,   "Chord");
-        add (Arpeggiator::patternParamID, "Pattern");
-        add (Arpeggiator::rateParamID,    "Rate");
-        add (Arpeggiator::octavesParamID, "Octaves");
-        add (Arpeggiator::gateParamID,    "Gate");
-        add (Arpeggiator::swingParamID,   "Swing");
-        add (Arpeggiator::freeBpmParamID, "Free tempo");
+        rows.addChoice (*this, s, Arpeggiator::patternParamID, "Pattern");
+        rows.addChoice (*this, s, Arpeggiator::rateParamID,    "Rate");
+        rows.addSlider (*this, s, Arpeggiator::octavesParamID, "Octaves");
+        rows.addSlider (*this, s, Arpeggiator::gateParamID,    "Gate");
+        rows.addSlider (*this, s, Arpeggiator::swingParamID,   "Swing");
+
+        rows.addSlider (*this, s, Arpeggiator::freeBpmParamID, "Free tempo");
     }
 
     void refresh()
@@ -540,30 +702,23 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
-        auto place = [&r, this] (size_t from, size_t to)
-        {
-            for (size_t i = from; i < to && i < rows.size(); ++i)
-                rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-            r.removeFromTop (8);
-        };
-
         headers.push_back ({ "Notes", r.removeFromTop (30) });
-        place (0, 3);
+        rows.place (r, 0, 3);
         hintArea = r.removeFromTop (44);
 
         headers.push_back ({ "Pattern", r.removeFromTop (30) });
-        place (3, 8);
+        rows.place (r, 3, 8);
 
         headers.push_back ({ "Tempo", r.removeFromTop (30) });
-        place (8, 9);
+        rows.place (r, 8, 9);
         tempoNote = r.removeFromTop (28);
     }
 
-    static constexpr int contentHeight = 560;
+    static constexpr int contentHeight = 640;
 
 private:
     ExpressionSynthProcessor& proc;
-    std::vector<std::unique_ptr<ParamRow>> rows;
+    RowList rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> hintArea, tempoNote;
     juce::String hint;
@@ -579,28 +734,21 @@ public:
     {
         auto& s = proc.getParams();
 
-        auto add = [this, &s] (juce::String id, juce::String label)
-        {
-            auto row = std::make_unique<ParamRow> (s, id, label);
-            addAndMakeVisible (*row);
-            rows.push_back (std::move (row));
-        };
+        rows.addSlider (*this, s, EffectsChain::driveParamID,      "Drive");
+        rows.addSlider (*this, s, EffectsChain::driveToneParamID,  "Tone");
+        rows.addSlider (*this, s, EffectsChain::driveLevelParamID, "Level");
+        rows.addSlider (*this, s, EffectsChain::driveMixParamID,   "Mix");
 
-        add (EffectsChain::driveParamID,      "Drive");
-        add (EffectsChain::driveToneParamID,  "Tone");
-        add (EffectsChain::driveLevelParamID, "Level");
-        add (EffectsChain::driveMixParamID,   "Mix");
+        rows.addSlider (*this, s, EffectsChain::delayTimeParamID,     "Time");
+        rows.addToggle (*this, s, EffectsChain::delaySyncParamID,     "Sync");
+        rows.addChoice (*this, s, EffectsChain::delayDivisionParamID, "Division");
+        rows.addSlider (*this, s, EffectsChain::delayFeedbackParamID, "Feedback");
+        rows.addSlider (*this, s, EffectsChain::delayDampParamID,     "Damping");
+        rows.addSlider (*this, s, EffectsChain::delayMixParamID,      "Mix");
 
-        add (EffectsChain::delayTimeParamID,     "Time");
-        add (EffectsChain::delaySyncParamID,     "Sync");
-        add (EffectsChain::delayDivisionParamID, "Division");
-        add (EffectsChain::delayFeedbackParamID, "Feedback");
-        add (EffectsChain::delayDampParamID,     "Damping");
-        add (EffectsChain::delayMixParamID,      "Mix");
-
-        add (EffectsChain::reverbSizeParamID, "Size");
-        add (EffectsChain::reverbDampParamID, "Damping");
-        add (EffectsChain::reverbMixParamID,  "Mix");
+        rows.addSlider (*this, s, EffectsChain::reverbSizeParamID, "Size");
+        rows.addSlider (*this, s, EffectsChain::reverbDampParamID, "Damping");
+        rows.addSlider (*this, s, EffectsChain::reverbMixParamID,  "Mix");
     }
 
     void paint (juce::Graphics& g) override
@@ -622,30 +770,23 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
-        auto place = [&r, this] (size_t from, size_t to)
-        {
-            for (size_t i = from; i < to && i < rows.size(); ++i)
-                rows[i]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-            r.removeFromTop (8);
-        };
-
         headers.push_back ({ "Drive", r.removeFromTop (30) });
-        place (0, 4);
+        rows.place (r, 0, 4);
 
         headers.push_back ({ "Delay", r.removeFromTop (30) });
-        place (4, 10);
+        rows.place (r, 4, 10);
 
         headers.push_back ({ "Reverb", r.removeFromTop (30) });
-        place (10, 13);
+        rows.place (r, 10, 13);
 
         footer = r.removeFromTop (58);
     }
 
-    static constexpr int contentHeight = 620;
+    static constexpr int contentHeight = 660;
 
 private:
     ExpressionSynthProcessor& proc;
-    std::vector<std::unique_ptr<ParamRow>> rows;
+    RowList rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> footer;
 };
@@ -667,17 +808,10 @@ public:
 
         for (int slot = 0; slot < ExpressionMapper::numSlots; ++slot)
         {
-            auto add = [this, &s] (juce::String id, juce::String label)
-            {
-                auto row = std::make_unique<ParamRow> (s, id, label);
-                addAndMakeVisible (*row);
-                rows.push_back (std::move (row));
-            };
-
-            add (ExpressionMapper::sourceParamID (slot),      "Source");
-            add (ExpressionMapper::destinationParamID (slot), "Destination");
-            add (ExpressionMapper::depthParamID (slot),       "Depth");
-            add (ExpressionMapper::curveParamID (slot),       "Curve");
+            rows.addChoice (*this, s, ExpressionMapper::sourceParamID (slot),      "Source");
+            rows.addChoice (*this, s, ExpressionMapper::destinationParamID (slot), "Destination");
+            rows.addSlider (*this, s, ExpressionMapper::depthParamID (slot),       "Depth");
+            rows.addChoice (*this, s, ExpressionMapper::curveParamID (slot),       "Curve");
         }
     }
 
@@ -702,25 +836,17 @@ public:
         for (int slot = 0; slot < ExpressionMapper::numSlots; ++slot)
         {
             headers.push_back ({ "Route " + juce::String (slot + 1), r.removeFromTop (30) });
-
-            for (int k = 0; k < 4; ++k)
-            {
-                const size_t index = (size_t) (slot * 4 + k);
-                if (index < rows.size())
-                    rows[index]->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-            }
-
-            r.removeFromTop (6);
+            rows.place (r, (size_t) (slot * 4), (size_t) (slot * 4 + 4));
         }
 
         footer = r.removeFromTop (44);
     }
 
-    static constexpr int contentHeight = 880;
+    static constexpr int contentHeight = 1060;
 
 private:
     ExpressionSynthProcessor& proc;
-    std::vector<std::unique_ptr<ParamRow>> rows;
+    RowList rows;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> footer;
 };
@@ -769,8 +895,8 @@ public:
         g.setColour (Palette::line);
         g.drawHorizontalLine (strip.getBottom() - 1, 0.0f, (float) getWidth());
 
-        auto inner = strip.reduced (16, 11);
-        auto top = inner.removeFromTop (26);
+        auto inner = strip.reduced (16, stripPadV);
+        auto top = inner.removeFromTop (stripTopRow);
 
         drawLabel (g, "ExpressionSynth", top, Palette::muted, 12.0f);
 
@@ -782,8 +908,8 @@ public:
         g.drawText (on ? noteName (note) : "--", top.removeFromRight (150),
                      juce::Justification::centredRight);
 
-        inner.removeFromTop (5);
-        auto bars = inner.removeFromTop (16);
+        inner.removeFromTop (stripGap);
+        auto bars = inner.removeFromTop (stripMeterH);
         const auto f = proc.getFeaturesForDisplay();
 
         drawStripMeter (g, bars.removeFromLeft (bars.getWidth() / 2 - 7),
@@ -811,7 +937,21 @@ public:
     }
 
 private:
-    static constexpr int stripHeight = 64;
+    // Sizes derived from their parts rather than stated as a literal.
+    // A hand-picked total that is a few pixels short does not fail or
+    // warn - JUCE's removeFromTop simply returns whatever is left, and a
+    // bar ends up zero pixels tall and invisible. Building the total from
+    // the pieces makes that impossible.
+    static constexpr int stripPadV      = 11;
+    static constexpr int stripTopRow    = 26;   // wordmark and note name
+    static constexpr int stripGap       = 5;
+    static constexpr int stripLabelH    = 10;
+    static constexpr int stripLabelGap  = 3;
+    static constexpr int stripBarH      = 4;
+    static constexpr int stripMeterH    = stripLabelH + stripLabelGap + stripBarH;
+
+    static constexpr int stripHeight =
+        stripPadV * 2 + stripTopRow + stripGap + stripMeterH;
 
     void showPane (int index)
     {
@@ -835,10 +975,15 @@ private:
     static void drawStripMeter (juce::Graphics& g, juce::Rectangle<int> area,
                                  const juce::String& label, float value, juce::Colour colour)
     {
-        drawLabel (g, label, area.removeFromTop (10), Palette::muted, 9.0f);
-        area.removeFromTop (3);
+        drawLabel (g, label, area.removeFromTop (stripLabelH), Palette::muted, 9.0f);
+        area.removeFromTop (stripLabelGap);
 
-        auto bar = area.removeFromTop (3).toFloat();
+        // Floor the height so that if this layout is ever short again the
+        // bar is visibly wrong rather than invisible. A wrong bar gets
+        // noticed; a missing one reads as a dead meter.
+        auto bar = area.removeFromTop (juce::jmax (2, stripBarH)).toFloat();
+        if (bar.getHeight() < 2.0f)
+            bar = bar.withHeight (2.0f);
         g.setColour (juce::Colour (0xff111318));
         g.fillRoundedRectangle (bar, 1.5f);
         g.setColour (colour);

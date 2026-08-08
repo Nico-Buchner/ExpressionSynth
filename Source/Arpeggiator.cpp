@@ -1,5 +1,6 @@
 #include "Arpeggiator.h"
 #include <algorithm>
+#include "ParameterFormat.h"
 
 void Arpeggiator::addParameters (std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params)
 {
@@ -19,22 +20,26 @@ void Arpeggiator::addParameters (std::vector<std::unique_ptr<juce::RangedAudioPa
         juce::ParameterID { rateParamID, 1 }, "Arp Rate", getRateNames(), 3));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { octavesParamID, 1 }, "Arp Octaves", 1, maxOctaves, 1));
+        juce::ParameterID { octavesParamID, 1 }, "Arp Octaves", 1, maxOctaves, 1,
+        ParameterFormat::intFmt (ParameterFormat::octaveCount)));
 
     params.push_back (std::make_unique<Float> (
         juce::ParameterID { gateParamID, 1 }, "Arp Gate",
-        juce::NormalisableRange<float> (0.05f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.05f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Float> (
         juce::ParameterID { swingParamID, 1 }, "Arp Swing",
-        juce::NormalisableRange<float> (0.0f, 0.75f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 0.75f), 0.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Choice> (
         juce::ParameterID { chordParamID, 1 }, "Arp Chord", getChordNames(), 0));
 
     params.push_back (std::make_unique<Float> (
         juce::ParameterID { freeBpmParamID, 1 }, "Arp Free Tempo",
-        juce::NormalisableRange<float> (40.0f, 240.0f, 1.0f), 120.0f));
+        juce::NormalisableRange<float> (40.0f, 240.0f, 1.0f), 120.0f,
+        ParameterFormat::floatFmt (ParameterFormat::bpm)));
 }
 
 void Arpeggiator::prepare (double newSampleRate)

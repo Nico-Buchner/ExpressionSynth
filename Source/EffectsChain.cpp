@@ -1,4 +1,5 @@
 #include "EffectsChain.h"
+#include "ParameterFormat.h"
 
 void EffectsChain::addParameters (std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params)
 {
@@ -6,17 +7,22 @@ void EffectsChain::addParameters (std::vector<std::unique_ptr<juce::RangedAudioP
     using Range = juce::NormalisableRange<float>;
 
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { driveParamID, 1 }, "Drive", Range (0.0f, 1.0f), 0.0f));
+        juce::ParameterID { driveParamID, 1 }, "Drive", Range (0.0f, 1.0f), 0.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { driveToneParamID, 1 }, "Drive Tone", Range (0.0f, 1.0f), 0.5f));
+        juce::ParameterID { driveToneParamID, 1 }, "Drive Tone", Range (0.0f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { driveLevelParamID, 1 }, "Drive Level", Range (0.0f, 1.0f), 0.8f));
+        juce::ParameterID { driveLevelParamID, 1 }, "Drive Level", Range (0.0f, 1.0f), 0.8f,
+        ParameterFormat::floatFmt (ParameterFormat::decibels)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { driveMixParamID, 1 }, "Drive Mix", Range (0.0f, 1.0f), 1.0f));
+        juce::ParameterID { driveMixParamID, 1 }, "Drive Mix", Range (0.0f, 1.0f), 1.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Float> (
         juce::ParameterID { delayTimeParamID, 1 }, "Delay Time (ms)",
-        Range (10.0f, 2000.0f, 1.0f, 0.4f), 375.0f));
+        Range (10.0f, 2000.0f, 1.0f, 0.4f), 375.0f,
+        ParameterFormat::floatFmt (ParameterFormat::milliseconds)));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { delaySyncParamID, 1 }, "Delay Sync", true));
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
@@ -24,18 +30,24 @@ void EffectsChain::addParameters (std::vector<std::unique_ptr<juce::RangedAudioP
         getDivisionNames(), 1));
     params.push_back (std::make_unique<Float> (
         juce::ParameterID { delayFeedbackParamID, 1 }, "Delay Feedback",
-        Range (0.0f, 0.95f), 0.35f));
+        Range (0.0f, 0.95f), 0.35f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { delayDampParamID, 1 }, "Delay Damping", Range (0.0f, 1.0f), 0.4f));
+        juce::ParameterID { delayDampParamID, 1 }, "Delay Damping", Range (0.0f, 1.0f), 0.4f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { delayMixParamID, 1 }, "Delay Mix", Range (0.0f, 1.0f), 0.0f));
+        juce::ParameterID { delayMixParamID, 1 }, "Delay Mix", Range (0.0f, 1.0f), 0.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { reverbSizeParamID, 1 }, "Reverb Size", Range (0.0f, 1.0f), 0.5f));
+        juce::ParameterID { reverbSizeParamID, 1 }, "Reverb Size", Range (0.0f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { reverbDampParamID, 1 }, "Reverb Damping", Range (0.0f, 1.0f), 0.5f));
+        juce::ParameterID { reverbDampParamID, 1 }, "Reverb Damping", Range (0.0f, 1.0f), 0.5f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
     params.push_back (std::make_unique<Float> (
-        juce::ParameterID { reverbMixParamID, 1 }, "Reverb Mix", Range (0.0f, 1.0f), 0.0f));
+        juce::ParameterID { reverbMixParamID, 1 }, "Reverb Mix", Range (0.0f, 1.0f), 0.0f,
+        ParameterFormat::floatFmt (ParameterFormat::percent)));
 }
 
 void EffectsChain::prepare (double newSampleRate, int blockSize, int channels)

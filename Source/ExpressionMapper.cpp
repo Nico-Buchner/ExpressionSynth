@@ -1,4 +1,5 @@
 #include "ExpressionMapper.h"
+#include "ParameterFormat.h"
 
 void ExpressionMapper::addParameters (std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params)
 {
@@ -29,7 +30,8 @@ void ExpressionMapper::addParameters (std::vector<std::unique_ptr<juce::RangedAu
 
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { depthParamID (i), 1 }, "Route " + n + " Depth",
-            juce::NormalisableRange<float> (0.0f, 1.0f), defaults[i].depth));
+            juce::NormalisableRange<float> (0.0f, 1.0f), defaults[i].depth,
+            ParameterFormat::floatFmt (ParameterFormat::percent)));
 
         params.push_back (std::make_unique<juce::AudioParameterChoice> (
             juce::ParameterID { curveParamID (i), 1 }, "Route " + n + " Curve",
