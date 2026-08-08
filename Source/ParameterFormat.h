@@ -145,6 +145,14 @@ namespace ParameterFormat
         return juce::String (n) + (n == 1 ? " voice" : " voices");
     }
 
+    // Pan reads as a side and an amount, which is how a mixer shows it.
+    inline juce::String panPosition (float v, int)
+    {
+        const int amount = juce::roundToInt (std::abs (v) * 100.0f);
+        if (amount < 1) return "centre";
+        return (v < 0.0f ? "L " : "R ") + juce::String (amount);
+    }
+
     inline juce::String noteCount (float v, int)
     {
         const int n = juce::roundToInt (v);

@@ -23,8 +23,27 @@ public:
 
 // Everything a voice needs for one block, gathered once rather than
 // passed as a long argument list.
+// One oscillator in Stack mode.
+struct OscSlot
+{
+    MorphOscillator::Shape shape = MorphOscillator::Shape::Morph;
+    int octave = 0;
+    float detuneCents = 0.0f;
+    float level = 1.0f;
+    float pan = 0.0f;
+    bool active = false;
+};
+
 struct VoiceParams
 {
+    // Morph stacks one waveform detuned against itself and sweeps its
+    // shape; Stack gives each oscillator its own fixed waveform. Both
+    // end up as four oscillators with a frequency ratio, a level and a
+    // pan, so the render path is shared and only the configuration
+    // differs.
+    bool stackMode = false;
+    OscSlot slots[4];
+
     // --- describe the input's character: applied to every voice ---
     float cutoffHz = 800.0f;
     float resonance = 0.7f;
@@ -67,12 +86,16 @@ public:
     void updateFromParams (const VoiceParams& p);
 
 private:
-    void refreshUnison (int count, float detuneCents, float spread);
+    void configureOscillators (const VoiceParams& p);
 
     static constexpr int maxUnison = 4;
 
     MorphOscillator oscs[maxUnison];
-    float detuneRatio[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+
+    // Shared by both modes: how far each oscillator is from the note,
+    // how loud it is, and where it sits.
+    float freqRatio[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
+    float oscLevel[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
     float panL[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
     float panR[maxUnison] { 1.0f, 1.0f, 1.0f, 1.0f };
 
@@ -83,10 +106,8 @@ private:
     float currentVelocity = 0.0f;
     bool audioTriggered = true;
 
-    int activeUnison = 1;
-    float unisonScale = 1.0f;
-    float cachedDetune = -1.0f;
-    float cachedSpread = -1.0f;
+    int activeOscs = 1;
+    float mixScale = 1.0f;
 
     juce::SmoothedValue<float> outputGain { 0.8f };
 
@@ -149,6 +170,15 @@ public:
     static constexpr auto ampLevelParamID  = "synthLevel";
     static constexpr auto cutoffModDepthParamID = "synthCutoffModDepth";
     static constexpr auto morphModDepthParamID  = "synthMorphModDepth";
+
+    static constexpr int numOscSlots = 4;
+
+    static constexpr auto oscModeParamID = "oscMode";
+    static juce::String oscShapeParamID  (int i) { return "osc" + juce::String (i) + "Shape"; }
+    static juce::String oscOctaveParamID (int i) { return "osc" + juce::String (i) + "Oct"; }
+    static juce::String oscDetuneParamID (int i) { return "osc" + juce::String (i) + "Det"; }
+    static juce::String oscLevelParamID  (int i) { return "osc" + juce::String (i) + "Lvl"; }
+    static juce::String oscPanParamID    (int i) { return "osc" + juce::String (i) + "Pan"; }
 
     static constexpr auto morphParamID   = "synthMorph";
     static constexpr auto unisonParamID  = "synthUnison";

@@ -79,6 +79,200 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };
 
+// Rotary control, following the convention every synthesiser uses for a
+// bounded amount: the arc shows position at a glance, and the pointer
+// gives a precise reading. Bipolar parameters fill from the centre, so
+// "no change" is visibly the middle rather than the far left.
+class KnobLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    bool bipolar = false;
+
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+                            float pos, float startAngle, float endAngle,
+                            juce::Slider&) override
+    {
+        auto area = juce::Rectangle<int> (x, y, width, height).toFloat();
+        const float d = juce::jmin (area.getWidth(), area.getHeight());
+        auto r = area.withSizeKeepingCentre (d, d).reduced (3.0f);
+        const float radius = r.getWidth() * 0.5f;
+        const auto centre = r.getCentre();
+        const float angle = startAngle + pos * (endAngle - startAngle);
+        const float thickness = juce::jmax (3.0f, radius * 0.16f);
+
+        juce::Path track;
+        track.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
+                              startAngle, endAngle, true);
+        g.setColour (juce::Colour (0xff2a2f3a));
+        g.strokePath (track, juce::PathStrokeType (thickness, juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded));
+
+        // Fill from the centre for bipolar controls, from the start
+        // otherwise.
+        const float from = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
+        if (std::abs (angle - from) > 0.01f)
+        {
+            juce::Path value;
+            value.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
+                                  juce::jmin (from, angle), juce::jmax (from, angle), true);
+            g.setColour (Palette::bone);
+            g.strokePath (value, juce::PathStrokeType (thickness, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+        }
+
+        // Body and pointer.
+        const float bodyR = radius - thickness * 1.15f;
+        g.setColour (juce::Colour (0xff23262e));
+        g.fillEllipse (centre.x - bodyR, centre.y - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+
+        juce::Path pointer;
+        pointer.addRoundedRectangle (-1.2f, -bodyR + 2.0f, 2.4f, bodyR * 0.55f, 1.2f);
+        pointer.applyTransform (juce::AffineTransform::rotation (angle)
+                                  .translated (centre.x, centre.y));
+        g.setColour (Palette::bone);
+        g.fillPath (pointer);
+    }
+};
+
+class Knob : public juce::Component
+{
+public:
+    Knob (juce::AudioProcessorValueTreeState& s, juce::String id,
+           juce::String labelText, bool bipolar = false)
+        : state (s), paramID (std::move (id)), label (std::move (labelText))
+    {
+        lnf.bipolar = bipolar;
+        slider.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        slider.setRotaryParameters (rotaryStart, rotaryEnd, true);
+        slider.setLookAndFeel (&lnf);
+        slider.onValueChange = [this] { repaint(); };
+        addAndMakeVisible (slider);
+
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>
+                        (state, paramID, slider);
+    }
+
+    ~Knob() override { slider.setLookAndFeel (nullptr); }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        r.removeFromTop (knobSize);
+
+        drawLabel (g, label, r.removeFromTop (13), Palette::muted, 9.0f,
+                    juce::Justification::centred);
+
+        juce::String text;
+        if (auto* p = state.getParameter (paramID))
+            text = p->getCurrentValueAsText();
+
+        g.setColour (juce::Colour (0xff98a0b0));
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawText (text, r, juce::Justification::centredTop);
+    }
+
+    void resized() override
+    {
+        slider.setBounds (getLocalBounds().removeFromTop (knobSize));
+    }
+
+    static constexpr int knobSize = 54;
+    static constexpr int cellWidth = 116;
+    static constexpr int cellHeight = knobSize + 13 + 14;
+
+private:
+    // Just under three quarters of a turn, the usual span - enough travel
+    // for fine adjustment without the pointer ever pointing straight up
+    // at two different values.
+    static constexpr float rotaryStart = juce::MathConstants<float>::pi * 1.25f;
+    static constexpr float rotaryEnd   = juce::MathConstants<float>::pi * 2.75f;
+
+    juce::AudioProcessorValueTreeState& state;
+    juce::String paramID, label;
+    juce::Slider slider;
+    KnobLookAndFeel lnf;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+};
+
+// Vertical fader. Used for envelope stages, where four side by side form
+// a picture of the envelope itself - which is why every synthesiser
+// draws them this way rather than as four knobs.
+class FaderLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+                            float sliderPos, float, float,
+                            juce::Slider::SliderStyle, juce::Slider&) override
+    {
+        const float cx = (float) x + (float) width * 0.5f;
+
+        g.setColour (juce::Colour (0xff101218));
+        g.fillRoundedRectangle (cx - 3.0f, (float) y, 6.0f, (float) height, 3.0f);
+
+        g.setColour (Palette::bone.withAlpha (0.55f));
+        g.fillRoundedRectangle (cx - 3.0f, sliderPos, 6.0f,
+                                 (float) (y + height) - sliderPos, 3.0f);
+
+        g.setColour (Palette::bone);
+        g.fillRoundedRectangle (cx - 11.0f, sliderPos - 5.0f, 22.0f, 10.0f, 3.0f);
+        g.setColour (juce::Colour (0xff23262e));
+        g.fillRect (cx - 9.0f, sliderPos - 0.5f, 18.0f, 1.0f);
+    }
+};
+
+class Fader : public juce::Component
+{
+public:
+    Fader (juce::AudioProcessorValueTreeState& s, juce::String id, juce::String labelText)
+        : state (s), paramID (std::move (id)), label (std::move (labelText))
+    {
+        slider.setSliderStyle (juce::Slider::LinearVertical);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        slider.setLookAndFeel (&lnf);
+        slider.onValueChange = [this] { repaint(); };
+        addAndMakeVisible (slider);
+
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>
+                        (state, paramID, slider);
+    }
+
+    ~Fader() override { slider.setLookAndFeel (nullptr); }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        r.removeFromTop (trackHeight);
+
+        drawLabel (g, label, r.removeFromTop (13), Palette::muted, 9.0f,
+                    juce::Justification::centred);
+
+        juce::String text;
+        if (auto* p = state.getParameter (paramID))
+            text = p->getCurrentValueAsText();
+
+        g.setColour (juce::Colour (0xff98a0b0));
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawText (text, r, juce::Justification::centredTop);
+    }
+
+    void resized() override
+    {
+        slider.setBounds (getLocalBounds().removeFromTop (trackHeight).reduced (0, 6));
+    }
+
+    static constexpr int trackHeight = 104;
+    static constexpr int cellWidth = 62;
+    static constexpr int cellHeight = trackHeight + 13 + 14;
+
+private:
+    juce::AudioProcessorValueTreeState& state;
+    juce::String paramID, label;
+    juce::Slider slider;
+    FaderLookAndFeel lnf;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+};
+
 // A choice parameter deserves a menu, not a slider you drag until the
 // right word appears. Dragging works, but it makes the user hunt for a
 // value they can already name.
@@ -203,6 +397,72 @@ private:
 // Panes hold a mixed list: sliders for continuous values, menus for
 // choices, switches for on/off. A single vector of Components keeps the
 // layout code from having to know which is which.
+// Knobs and faders sit in rows across the panel rather than stacked one
+// per line, which is how every hardware and software synthesiser lays
+// them out - and it fits far more in the same height.
+struct ControlGrid
+{
+    std::vector<std::unique_ptr<juce::Component>> cells;
+    std::vector<bool> isFader;
+
+    void addKnob (juce::Component& owner, juce::AudioProcessorValueTreeState& s,
+                   juce::String id, juce::String label, bool bipolar = false)
+    {
+        auto k = std::make_unique<Knob> (s, id, label, bipolar);
+        owner.addAndMakeVisible (*k);
+        cells.push_back (std::move (k));
+        isFader.push_back (false);
+    }
+
+    void addFader (juce::Component& owner, juce::AudioProcessorValueTreeState& s,
+                    juce::String id, juce::String label)
+    {
+        auto f = std::make_unique<Fader> (s, id, label);
+        owner.addAndMakeVisible (*f);
+        cells.push_back (std::move (f));
+        isFader.push_back (true);
+    }
+
+    // Lays cells [from, to) across the width, wrapping as needed, and
+    // consumes exactly the height used.
+    void layout (juce::Rectangle<int>& area, size_t from, size_t to, int perRow) const
+    {
+        const int count = (int) (juce::jmin (to, cells.size()) - from);
+        if (count <= 0)
+            return;
+
+        const bool faders = isFader[from];
+        const int cw = faders ? Fader::cellWidth : Knob::cellWidth;
+        const int ch = faders ? Fader::cellHeight : Knob::cellHeight;
+        const int columns = juce::jmax (1, juce::jmin (perRow, count));
+
+        size_t i = from;
+        while (i < from + (size_t) count)
+        {
+            auto row = area.removeFromTop (ch);
+            const int n = (int) juce::jmin ((size_t) columns, from + (size_t) count - i);
+
+            // Centre each row so a short final row does not sit oddly
+            // against the left edge.
+            const int used = n * cw;
+            row.removeFromLeft (juce::jmax (0, (row.getWidth() - used) / 2));
+
+            for (int c = 0; c < n; ++c, ++i)
+                cells[i]->setBounds (row.removeFromLeft (cw));
+
+            area.removeFromTop (6);
+        }
+    }
+
+    static int heightFor (int count, int perRow, bool faders)
+    {
+        if (count <= 0) return 0;
+        const int rows = (count + perRow - 1) / perRow;
+        const int ch = faders ? Fader::cellHeight : Knob::cellHeight;
+        return rows * (ch + 6);
+    }
+};
+
 struct RowList
 {
     std::vector<std::unique_ptr<juce::Component>> rows;
@@ -337,13 +597,12 @@ public:
             applyMode (on);
         };
 
-        adaptRate = std::make_unique<ParamRow> (s, SynthEngine::adaptRateParamID, "Adapt over");
-        addAndMakeVisible (*adaptRate);
+        grid.addKnob (*this, s, SynthEngine::adaptRateParamID,     "Adapt over");
+        grid.addKnob (*this, s, SynthEngine::pitchMinParamID,      "Lowest");
+        grid.addKnob (*this, s, SynthEngine::pitchMaxParamID,      "Highest");
+        grid.addKnob (*this, s, SynthEngine::pitchStabilityParamID,"Stability");
+        grid.addKnob (*this, s, SynthEngine::bendRangeParamID,     "Bend");
 
-        stability = std::make_unique<ParamRow> (s, SynthEngine::pitchStabilityParamID, "Stability");
-        bendRange = std::make_unique<ParamRow> (s, SynthEngine::bendRangeParamID, "Bend range");
-        addAndMakeVisible (*stability);
-        addAndMakeVisible (*bendRange);
 
         applyMode (adaptiveSwitch.getState());
     }
@@ -355,7 +614,7 @@ public:
     {
         pad.setVisible (adaptive);
         weightBars.setVisible (adaptive);
-        adaptRate->setVisible (adaptive);
+        grid.cells[0]->setVisible (adaptive);      // adapt rate
         articulation.setVisible (! adaptive);
 
         ampMeter.setLocked (adaptive);
@@ -453,12 +712,12 @@ public:
             weightBars.setBounds (padRow.removeFromRight (132).reduced (4, 6));
             pad.setBounds (padRow.withTrimmedRight (8));
             r.removeFromTop (6);
-            adaptRate->setBounds (r.removeFromTop (ParamRow::preferredHeight));
+            grid.layout (r, 0, 1, 1);
         }
         else
         {
             articulation.setBounds (r.removeFromTop (32));
-            r.removeFromTop (ParamRow::preferredHeight + 92);
+            r.removeFromTop (Knob::cellHeight + 98);
         }
 
         r.removeFromTop (12);
@@ -471,13 +730,12 @@ public:
         r.removeFromTop (6);
 
         groupArea = r.removeFromTop (34);
-        stability->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-        bendRange->setBounds (r.removeFromTop (ParamRow::preferredHeight));
-        r.removeFromTop (8);
+        grid.layout (r, 1, 5, 4);
+        r.removeFromTop (4);
         mode.setBounds (r.removeFromTop (32));
     }
 
-    static constexpr int contentHeight = 680;   // 618 needed, margin for edits
+    static constexpr int contentHeight = 760;
 
 private:
     ExpressionSynthProcessor& proc;
@@ -487,7 +745,7 @@ private:
     DescriptorPad pad;
     WeightBars weightBars;
     ThresholdMeter ampMeter, confMeter, onsetMeter;
-    std::unique_ptr<ParamRow> stability, bendRange, adaptRate;
+    ControlGrid grid;
     bool lastAdaptive = false;
     juce::Rectangle<int> legendArea, groupArea;
     juce::String pitchText { "--" };
@@ -506,34 +764,55 @@ public:
 
         rows.addToggle (*this, s, SynthEngine::audioNotesParamID, "Audio notes");
         rows.addToggle (*this, s, SynthEngine::midiNotesParamID,  "MIDI notes");
+        rows.addChoice (*this, s, SynthEngine::oscModeParamID,    "Mode");
 
-        rows.addSlider (*this, s, SynthEngine::syncMixParamID,     "Sync mix");
-        rows.addSlider (*this, s, SynthEngine::syncRatioParamID,   "Ratio");
-        rows.addSlider (*this, s, SynthEngine::syncSensParamID,    "Sensitivity");
-        rows.addSlider (*this, s, SynthEngine::syncReleaseParamID, "Release");
+        for (int i = 0; i < SynthEngine::numOscSlots; ++i)
+            rows.addChoice (*this, s, SynthEngine::oscShapeParamID (i),
+                             "Osc " + juce::String (i + 1));
 
-        rows.addSlider (*this, s, SynthEngine::morphParamID,         "Waveshape");
-        rows.addSlider (*this, s, SynthEngine::morphModDepthParamID, "Mod depth");
+        grid.addKnob (*this, s, SynthEngine::syncMixParamID,     "Mix");
+        grid.addKnob (*this, s, SynthEngine::syncRatioParamID,   "Ratio");
+        grid.addKnob (*this, s, SynthEngine::syncSensParamID,    "Sens");
+        grid.addKnob (*this, s, SynthEngine::syncReleaseParamID, "Release");
 
-        rows.addSlider (*this, s, SynthEngine::unisonParamID, "Voices");
-        rows.addSlider (*this, s, SynthEngine::detuneParamID, "Detune");
-        rows.addSlider (*this, s, SynthEngine::spreadParamID, "Spread");
+        grid.addKnob (*this, s, SynthEngine::morphParamID,         "Shape");
+        grid.addKnob (*this, s, SynthEngine::morphModDepthParamID, "Mod");
+        grid.addKnob (*this, s, SynthEngine::unisonParamID,        "Voices");
+        grid.addKnob (*this, s, SynthEngine::detuneParamID,        "Detune");
+        grid.addKnob (*this, s, SynthEngine::spreadParamID,        "Spread");
 
-        rows.addSlider (*this, s, SynthEngine::cutoffParamID,         "Cutoff");
-        rows.addSlider (*this, s, SynthEngine::resonanceParamID,      "Resonance");
-        rows.addSlider (*this, s, SynthEngine::cutoffModDepthParamID, "Mod depth");
+        for (int i = 0; i < SynthEngine::numOscSlots; ++i)
+        {
+            grid.addKnob (*this, s, SynthEngine::oscOctaveParamID (i), "Octave", true);
+            grid.addKnob (*this, s, SynthEngine::oscDetuneParamID (i), "Detune", true);
+            grid.addKnob (*this, s, SynthEngine::oscLevelParamID (i),  "Level");
+            grid.addKnob (*this, s, SynthEngine::oscPanParamID (i),    "Pan", true);
+        }
 
-        rows.addSlider (*this, s, SynthEngine::attackParamID,  "Attack");
-        rows.addSlider (*this, s, SynthEngine::decayParamID,   "Decay");
-        rows.addSlider (*this, s, SynthEngine::sustainParamID, "Sustain");
-        rows.addSlider (*this, s, SynthEngine::releaseParamID, "Release");
+        grid.addKnob (*this, s, SynthEngine::cutoffParamID,         "Cutoff");
+        grid.addKnob (*this, s, SynthEngine::resonanceParamID,      "Reso");
+        grid.addKnob (*this, s, SynthEngine::cutoffModDepthParamID, "Mod");
 
-        rows.addSlider (*this, s, SynthEngine::ampLevelParamID, "Level");
+        // Four faders side by side draw the envelope's own shape, which
+        // is why every synthesiser lays an ADSR out this way.
+        grid.addFader (*this, s, SynthEngine::attackParamID,  "A");
+        grid.addFader (*this, s, SynthEngine::decayParamID,   "D");
+        grid.addFader (*this, s, SynthEngine::sustainParamID, "S");
+        grid.addFader (*this, s, SynthEngine::releaseParamID, "R");
+
+        grid.addKnob (*this, s, SynthEngine::ampLevelParamID, "Level");
     }
 
     void refresh()
     {
         auto& s = proc.getParams();
+
+        if (proc.isStackMode() != lastStack)
+        {
+            lastStack = proc.isStackMode();
+            resized();
+            repaint();
+        }
 
         const bool audioNotes = s.getRawParameterValue (SynthEngine::audioNotesParamID)->load() > 0.5f;
         const bool midiNotes  = s.getRawParameterValue (SynthEngine::midiNotesParamID)->load() > 0.5f;
@@ -542,22 +821,14 @@ public:
         if (audioNotes && midiNotes)
             sHint = "Both. Detected notes carry the input's envelope and bend; keyboard notes "
                     "play at their own velocity. Timbre follows the input either way.";
-        else if (audioNotes)
-            sHint = "The instrument plays the synth.";
-        else if (midiNotes)
-            sHint = "Keyboard plays the notes; the instrument shapes their timbre.";
-        else
-            sHint = "No note source enabled - nothing will sound.";
+        else if (audioNotes) sHint = "The instrument plays the synth.";
+        else if (midiNotes)  sHint = "Keyboard plays the notes; the instrument shapes their timbre.";
+        else                 sHint = "No note source enabled - nothing will sound.";
 
-        if (sHint != sourceHint)
-        {
-            sourceHint = sHint;
-            repaint (sourceNote);
-        }
+        if (sHint != sourceHint) { sourceHint = sHint; repaint (sourceNote); }
 
         const float mix = proc.getSyncMix();
         juce::String hint;
-
         if (mix < 0.001f)
             hint = "Note mode. Pitch is detected and quantised; adaptive articulation applies.";
         else if (mix > 0.999f)
@@ -567,18 +838,17 @@ public:
             hint = "Blended. Sync responds immediately and covers the detection delay; "
                    "the note layer arrives beneath it.";
 
-        if (hint != syncHint)
-        {
-            syncHint = hint;
-            repaint (syncNote);
-        }
+        if (hint != syncHint) { syncHint = hint; repaint (syncNote); }
 
-        const float base = s.getRawParameterValue (SynthEngine::morphParamID)->load();
-        const float depth = s.getRawParameterValue (SynthEngine::morphModDepthParamID)->load();
-        const float live = juce::jlimit (0.0f, 1.0f,
-                                          base + proc.getFeaturesForDisplay().spectralCentroid * depth);
-        scope.setPositions (base, live);
-        scope.repaint();
+        if (! lastStack)
+        {
+            const float base = s.getRawParameterValue (SynthEngine::morphParamID)->load();
+            const float depth = s.getRawParameterValue (SynthEngine::morphModDepthParamID)->load();
+            const float live = juce::jlimit (0.0f, 1.0f,
+                base + proc.getFeaturesForDisplay().spectralCentroid * depth);
+            scope.setPositions (base, live);
+            scope.repaint();
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -597,41 +867,60 @@ public:
         auto r = getLocalBounds().reduced (14, 12);
         headers.clear();
 
+        const bool stack = proc.isStackMode();
+
+        for (size_t i = 3; i < 7; ++i)   rows.rows[i]->setVisible (stack);
+        for (size_t i = 4; i < 9; ++i)   grid.cells[i]->setVisible (! stack);
+        for (size_t i = 9; i < 25; ++i)  grid.cells[i]->setVisible (stack);
+        scope.setVisible (! stack);
+
         headers.push_back ({ "Note sources", r.removeFromTop (30) });
         rows.place (r, 0, 2);
         sourceNote = r.removeFromTop (30);
 
         headers.push_back ({ "Sync", r.removeFromTop (30) });
-        rows.place (r, 2, 6);
+        grid.layout (r, 0, 4, 4);
         syncNote = r.removeFromTop (30);
 
         headers.push_back ({ "Oscillator", r.removeFromTop (30) });
-        scope.setBounds (r.removeFromTop (78));
-        r.removeFromTop (8);
-        rows.place (r, 6, 8);
+        rows.place (r, 2, 3);
 
-        headers.push_back ({ "Unison", r.removeFromTop (30) });
-        rows.place (r, 8, 11);
+        if (! stack)
+        {
+            scope.setBounds (r.removeFromTop (78));
+            r.removeFromTop (8);
+            grid.layout (r, 4, 9, 3);
+        }
+        else
+        {
+            for (int slot = 0; slot < SynthEngine::numOscSlots; ++slot)
+            {
+                rows.place (r, (size_t) (3 + slot), (size_t) (4 + slot));
+                grid.layout (r, (size_t) (9 + slot * 4), (size_t) (13 + slot * 4), 4);
+            }
+        }
 
         headers.push_back ({ "Filter", r.removeFromTop (30) });
-        rows.place (r, 11, 14);
+        grid.layout (r, 25, 28, 3);
 
         headers.push_back ({ "Envelope", r.removeFromTop (30) });
-        rows.place (r, 14, 18);
+        grid.layout (r, 28, 32, 4);
 
         headers.push_back ({ "Output", r.removeFromTop (30) });
-        rows.place (r, 18, 19);
+        grid.layout (r, 32, 33, 1);
     }
 
-    static constexpr int contentHeight = 1010;
+    static constexpr int contentHeight = 1440;
 
 private:
     ExpressionSynthProcessor& proc;
     WaveScope scope;
     RowList rows;
+    ControlGrid grid;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> syncNote, sourceNote;
     juce::String syncHint, sourceHint;
+    bool lastStack = false;
 };
 
 // ---------------------------------------------------------------------
@@ -652,14 +941,13 @@ public:
         rows.addToggle (*this, s, Arpeggiator::enabledParamID, "Arp");
         rows.addChoice (*this, s, Arpeggiator::sourceParamID,  "Source");
         rows.addChoice (*this, s, Arpeggiator::chordParamID,   "Chord");
-
         rows.addChoice (*this, s, Arpeggiator::patternParamID, "Pattern");
         rows.addChoice (*this, s, Arpeggiator::rateParamID,    "Rate");
-        rows.addSlider (*this, s, Arpeggiator::octavesParamID, "Octaves");
-        rows.addSlider (*this, s, Arpeggiator::gateParamID,    "Gate");
-        rows.addSlider (*this, s, Arpeggiator::swingParamID,   "Swing");
 
-        rows.addSlider (*this, s, Arpeggiator::freeBpmParamID, "Free tempo");
+        grid.addKnob (*this, s, Arpeggiator::octavesParamID, "Octaves");
+        grid.addKnob (*this, s, Arpeggiator::gateParamID,    "Gate");
+        grid.addKnob (*this, s, Arpeggiator::swingParamID,   "Swing");
+        grid.addKnob (*this, s, Arpeggiator::freeBpmParamID, "Free tempo");
     }
 
     void refresh()
@@ -678,11 +966,7 @@ public:
             h = "Notes played into the plugin accumulate and are replayed as a pattern. "
                 "The instrument still supplies every note. Stop for two seconds to clear.";
 
-        if (h != hint)
-        {
-            hint = h;
-            repaint (hintArea);
-        }
+        if (h != hint) { hint = h; repaint (hintArea); }
     }
 
     void paint (juce::Graphics& g) override
@@ -707,18 +991,20 @@ public:
         hintArea = r.removeFromTop (44);
 
         headers.push_back ({ "Pattern", r.removeFromTop (30) });
-        rows.place (r, 3, 8);
+        rows.place (r, 3, 5);
+        grid.layout (r, 0, 3, 3);
 
         headers.push_back ({ "Tempo", r.removeFromTop (30) });
-        rows.place (r, 8, 9);
+        grid.layout (r, 3, 4, 1);
         tempoNote = r.removeFromTop (28);
     }
 
-    static constexpr int contentHeight = 640;
+    static constexpr int contentHeight = 700;
 
 private:
     ExpressionSynthProcessor& proc;
     RowList rows;
+    ControlGrid grid;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> hintArea, tempoNote;
     juce::String hint;
@@ -734,21 +1020,22 @@ public:
     {
         auto& s = proc.getParams();
 
-        rows.addSlider (*this, s, EffectsChain::driveParamID,      "Drive");
-        rows.addSlider (*this, s, EffectsChain::driveToneParamID,  "Tone");
-        rows.addSlider (*this, s, EffectsChain::driveLevelParamID, "Level");
-        rows.addSlider (*this, s, EffectsChain::driveMixParamID,   "Mix");
+        grid.addKnob (*this, s, EffectsChain::driveParamID,      "Drive");
+        grid.addKnob (*this, s, EffectsChain::driveToneParamID,  "Tone");
+        grid.addKnob (*this, s, EffectsChain::driveLevelParamID, "Level");
+        grid.addKnob (*this, s, EffectsChain::driveMixParamID,   "Mix");
 
-        rows.addSlider (*this, s, EffectsChain::delayTimeParamID,     "Time");
         rows.addToggle (*this, s, EffectsChain::delaySyncParamID,     "Sync");
         rows.addChoice (*this, s, EffectsChain::delayDivisionParamID, "Division");
-        rows.addSlider (*this, s, EffectsChain::delayFeedbackParamID, "Feedback");
-        rows.addSlider (*this, s, EffectsChain::delayDampParamID,     "Damping");
-        rows.addSlider (*this, s, EffectsChain::delayMixParamID,      "Mix");
 
-        rows.addSlider (*this, s, EffectsChain::reverbSizeParamID, "Size");
-        rows.addSlider (*this, s, EffectsChain::reverbDampParamID, "Damping");
-        rows.addSlider (*this, s, EffectsChain::reverbMixParamID,  "Mix");
+        grid.addKnob (*this, s, EffectsChain::delayTimeParamID,     "Time");
+        grid.addKnob (*this, s, EffectsChain::delayFeedbackParamID, "Feedback");
+        grid.addKnob (*this, s, EffectsChain::delayDampParamID,     "Damping");
+        grid.addKnob (*this, s, EffectsChain::delayMixParamID,      "Mix");
+
+        grid.addKnob (*this, s, EffectsChain::reverbSizeParamID, "Size");
+        grid.addKnob (*this, s, EffectsChain::reverbDampParamID, "Damping");
+        grid.addKnob (*this, s, EffectsChain::reverbMixParamID,  "Mix");
     }
 
     void paint (juce::Graphics& g) override
@@ -771,22 +1058,24 @@ public:
         headers.clear();
 
         headers.push_back ({ "Drive", r.removeFromTop (30) });
-        rows.place (r, 0, 4);
+        grid.layout (r, 0, 4, 4);
 
         headers.push_back ({ "Delay", r.removeFromTop (30) });
-        rows.place (r, 4, 10);
+        rows.place (r, 0, 2);
+        grid.layout (r, 4, 8, 4);
 
         headers.push_back ({ "Reverb", r.removeFromTop (30) });
-        rows.place (r, 10, 13);
+        grid.layout (r, 8, 11, 3);
 
         footer = r.removeFromTop (58);
     }
 
-    static constexpr int contentHeight = 660;
+    static constexpr int contentHeight = 700;
 
 private:
     ExpressionSynthProcessor& proc;
     RowList rows;
+    ControlGrid grid;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> headers;
     juce::Rectangle<int> footer;
 };

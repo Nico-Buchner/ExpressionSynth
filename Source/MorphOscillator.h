@@ -20,6 +20,19 @@
 class MorphOscillator
 {
 public:
+    // Two ways of choosing a waveform. Morph sweeps continuously and can
+    // be driven by the input's brightness; the discrete shapes hold
+    // still. A stack of fixed oscillators gives the ear something stable
+    // to hear modulation against, where a constantly morphing waveform
+    // reads as unsettled rather than expressive.
+    enum class Shape { Morph, Sine, Triangle, Saw, Square, Pulse };
+
+    static juce::StringArray getShapeNames()
+    {
+        return { "Off", "Sine", "Triangle", "Saw", "Square", "Pulse" };
+    }
+
+    void setShape (Shape s) { shape = s; }
     void prepare (double newSampleRate)
     {
         sampleRate = newSampleRate;
@@ -88,11 +101,29 @@ public:
         const float dt = phaseIncrement;
         float out = 0.0f;
 
-        switch (region)
+        switch (shape)
         {
-            case 0:  out = triangle() * gainA + saw (dt) * gainB;            break;
-            case 1:  out = saw (dt) * gainA + pulse (dt, 0.5f) * gainB;      break;
-            default: out = pulse (dt, pulseWidth);                           break;
+            // A sine needs no band-limiting, and is scaled so its RMS
+            // matches the others - otherwise selecting it would read as
+            // a volume change rather than a timbre one.
+            case Shape::Sine:
+                out = std::sin (phase * juce::MathConstants<float>::twoPi) * 0.816f;
+                break;
+
+            case Shape::Triangle: out = triangle();            break;
+            case Shape::Saw:      out = saw (dt);              break;
+            case Shape::Square:   out = pulse (dt, 0.5f);      break;
+            case Shape::Pulse:    out = pulse (dt, 0.15f);     break;
+
+            case Shape::Morph:
+            default:
+                switch (region)
+                {
+                    case 0:  out = triangle() * gainA + saw (dt) * gainB;       break;
+                    case 1:  out = saw (dt) * gainA + pulse (dt, 0.5f) * gainB; break;
+                    default: out = pulse (dt, pulseWidth);                      break;
+                }
+                break;
         }
 
         phase += dt;
@@ -173,6 +204,7 @@ private:
     float phaseIncrement = 0.0f;
     float morph = 0.0f;
 
+    Shape shape = Shape::Morph;
     int region = 0;
     float gainA = 1.0f;
     float gainB = 0.0f;

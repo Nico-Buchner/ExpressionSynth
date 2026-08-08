@@ -67,6 +67,10 @@ public:
     float getAnalysisLatencyMs() const { return featureExtractor.getAnalysisLatencyMs(); }
     bool isSyncMode() const { return synthEngine.isSyncMode(); }
     float getSyncMix() const { return synthEngine.getSyncMix(); }
+    bool isStackMode() const
+    {
+        return apvts.getRawParameterValue (SynthEngine::oscModeParamID)->load() > 0.5f;
+    }
     float getSyncFrequency() const { return synthEngine.getSyncFrequency(); }
     bool isSyncLocked() const { return synthEngine.isSyncLocked(); }
 

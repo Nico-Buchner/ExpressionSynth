@@ -18,35 +18,62 @@ void SynthVoice::prepare (const juce::dsp::ProcessSpec& spec)
     envelope.setSampleRate (spec.sampleRate);
     outputGain.reset (spec.sampleRate, 0.02);
 
-    refreshUnison (1, 0.0f, 0.0f);
     isPrepared = true;
 }
 
-void SynthVoice::refreshUnison (int count, float detuneCents, float spread)
+void SynthVoice::configureOscillators (const VoiceParams& p)
 {
-    activeUnison = juce::jlimit (1, maxUnison, count);
+    activeOscs = 0;
+    float levelSum = 0.0f;
 
-    for (int u = 0; u < activeUnison; ++u)
+    if (p.stackMode)
     {
-        // Position within the stack, -1 to +1.
-        const float pos = activeUnison > 1
-            ? (2.0f * (float) u / (float) (activeUnison - 1)) - 1.0f
-            : 0.0f;
+        // Each oscillator is its own voice in the chord sense: its own
+        // waveform, its own octave, its own place in the stereo field.
+        for (int i = 0; i < maxUnison; ++i)
+        {
+            const auto& slot = p.slots[i];
+            if (! slot.active)
+                continue;
 
-        detuneRatio[u] = std::pow (2.0f, (pos * detuneCents) / 1200.0f);
+            const int k = activeOscs++;
+            oscs[k].setShape (slot.shape);
+            freqRatio[k] = std::pow (2.0f, (float) slot.octave + slot.detuneCents / 1200.0f);
+            oscLevel[k] = slot.level;
 
-        // Equal-power pan so the stack keeps a constant level as it widens.
-        const float angle = (pos * spread + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
-        panL[u] = std::cos (angle);
-        panR[u] = std::sin (angle);
+            const float angle = (slot.pan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+            panL[k] = std::cos (angle);
+            panR[k] = std::sin (angle);
+            levelSum += slot.level;
+        }
+    }
+    else
+    {
+        // One waveform detuned against itself, spread across the field.
+        const int count = juce::jlimit (1, maxUnison, p.unisonCount);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const float pos = count > 1
+                ? (2.0f * (float) i / (float) (count - 1)) - 1.0f
+                : 0.0f;
+
+            oscs[i].setShape (MorphOscillator::Shape::Morph);
+            oscs[i].setMorph (p.morph);
+            freqRatio[i] = std::pow (2.0f, (pos * p.detuneCents) / 1200.0f);
+            oscLevel[i] = 1.0f;
+
+            const float angle = (pos * p.spread + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+            panL[i] = std::cos (angle);
+            panR[i] = std::sin (angle);
+            levelSum += 1.0f;
+        }
+        activeOscs = count;
     }
 
-    // Detuned oscillators are only partly correlated, so summing n of
-    // them raises level by roughly sqrt(n) rather than n.
-    unisonScale = 1.0f / std::sqrt ((float) activeUnison);
-
-    cachedDetune = detuneCents;
-    cachedSpread = spread;
+    // Detuned oscillators are only partly correlated, so their sum grows
+    // roughly with the square root of the total rather than linearly.
+    mixScale = levelSum > 0.0f ? 1.0f / std::sqrt (levelSum) : 0.0f;
 }
 
 void SynthVoice::startNote (int midiNoteNumber, float velocity,
@@ -89,33 +116,18 @@ void SynthVoice::updateFromParams (const VoiceParams& p)
     if (! isPrepared)
         return;
 
-    if (p.unisonCount != activeUnison
-        || std::abs (p.detuneCents - cachedDetune) > 0.01f
-        || std::abs (p.spread - cachedSpread) > 0.001f)
-    {
-        refreshUnison (p.unisonCount, p.detuneCents, p.spread);
-    }
+    configureOscillators (p);
 
-    // Bend is the detected pitch's deviation from the note it was
-    // quantised to. A keyboard note has no such relationship, so it plays
-    // where it was asked to.
     const float bendSemis = audioTriggered ? p.pitchBendSemitones : 0.0f;
     const float bent = (float) baseFrequency * std::pow (2.0f, bendSemis / 12.0f);
 
-    for (int u = 0; u < activeUnison; ++u)
-    {
-        oscs[u].setFrequency (juce::jlimit (20.0f, 20000.0f, bent * detuneRatio[u]));
-        oscs[u].setMorph (p.morph);
-    }
+    for (int i = 0; i < activeOscs; ++i)
+        oscs[i].setFrequency (juce::jlimit (20.0f, 20000.0f, bent * freqRatio[i]));
 
     filter.setCutoffFrequency (juce::jlimit (20.0f, 20000.0f, p.cutoffHz));
     filter.setResonance (juce::jlimit (0.1f, 10.0f, p.resonance));
 
     envelope.setParameters (p.adsr);
-
-    // Audio-triggered voices follow the input's envelope, because that
-    // envelope IS the note. MIDI voices would be silenced by it whenever
-    // the instrument was quiet, so they use the plain level instead.
     outputGain.setTargetValue (juce::jlimit (0.0f, 1.0f,
                                               audioTriggered ? p.envelopedGain : p.plainGain));
 }
@@ -132,15 +144,15 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
         float left = 0.0f;
         float right = 0.0f;
 
-        for (int u = 0; u < activeUnison; ++u)
+        for (int u = 0; u < activeOscs; ++u)
         {
-            const float s = oscs[u].processSample();
+            const float s = oscs[u].processSample() * oscLevel[u];
             left  += s * panL[u];
             right += s * panR[u];
         }
 
-        left  *= unisonScale;
-        right *= unisonScale;
+        left  *= mixScale;
+        right *= mixScale;
 
         left  = filter.processSample (0, left);
         right = filter.processSample (1, right);
@@ -353,6 +365,40 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthEngine::createParameter
     using Param = juce::AudioParameterFloat;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { oscModeParamID, 1 }, "Oscillator Mode",
+        juce::StringArray { "Morph", "Stack" }, 0));
+
+    // Stack slots. Off on all but the first, so switching to Stack gives
+    // a plain single oscillator rather than four at once.
+    for (int i = 0; i < numOscSlots; ++i)
+    {
+        const auto n = juce::String (i + 1);
+
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { oscShapeParamID (i), 1 }, "Osc " + n + " Shape",
+            MorphOscillator::getShapeNames(), i == 0 ? 3 : 0));
+
+        params.push_back (std::make_unique<juce::AudioParameterInt> (
+            juce::ParameterID { oscOctaveParamID (i), 1 }, "Osc " + n + " Octave",
+            -2, 2, 0));
+
+        params.push_back (std::make_unique<Param> (
+            juce::ParameterID { oscDetuneParamID (i), 1 }, "Osc " + n + " Detune",
+            juce::NormalisableRange<float> (-50.0f, 50.0f), 0.0f,
+            ParameterFormat::floatFmt (ParameterFormat::cents)));
+
+        params.push_back (std::make_unique<Param> (
+            juce::ParameterID { oscLevelParamID (i), 1 }, "Osc " + n + " Level",
+            juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f,
+            ParameterFormat::floatFmt (ParameterFormat::percent)));
+
+        params.push_back (std::make_unique<Param> (
+            juce::ParameterID { oscPanParamID (i), 1 }, "Osc " + n + " Pan",
+            juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f,
+            ParameterFormat::floatFmt (ParameterFormat::panPosition)));
+    }
+
     params.push_back (std::make_unique<Param> (
         juce::ParameterID { morphParamID, 1 }, "Waveshape",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f,
@@ -539,6 +585,21 @@ VoiceParams SynthEngine::gatherParams (juce::AudioProcessorValueTreeState& param
                               params.getRawParameterValue (morphParamID)->load()
                               + modulation.oscMorph.load()
                                 * params.getRawParameterValue (morphModDepthParamID)->load());
+    vp.stackMode = params.getRawParameterValue (oscModeParamID)->load() > 0.5f;
+
+    for (int i = 0; i < numOscSlots; ++i)
+    {
+        const int shapeIndex = (int) params.getRawParameterValue (oscShapeParamID (i))->load();
+
+        // Index 0 is Off; the rest map onto the discrete shapes in order.
+        vp.slots[i].active = shapeIndex > 0;
+        vp.slots[i].shape = (MorphOscillator::Shape) shapeIndex;
+        vp.slots[i].octave = (int) params.getRawParameterValue (oscOctaveParamID (i))->load();
+        vp.slots[i].detuneCents = params.getRawParameterValue (oscDetuneParamID (i))->load();
+        vp.slots[i].level = params.getRawParameterValue (oscLevelParamID (i))->load();
+        vp.slots[i].pan = params.getRawParameterValue (oscPanParamID (i))->load();
+    }
+
     vp.unisonCount = (int) params.getRawParameterValue (unisonParamID)->load();
     vp.detuneCents = params.getRawParameterValue (detuneParamID)->load();
     vp.spread      = params.getRawParameterValue (spreadParamID)->load();
